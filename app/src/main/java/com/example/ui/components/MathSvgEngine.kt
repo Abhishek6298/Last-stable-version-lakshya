@@ -113,50 +113,59 @@ object MathSvgEngine {
             return false
         }
 
-        // 4. Fractions (\frac, \dfrac, \tfrac) -> SVG
-        if (trimmed.contains("\\frac") || trimmed.contains("\\dfrac") || trimmed.contains("\\tfrac")) return true
+        // 4. Fractions & Divisions (\frac, \dfrac, \tfrac, \div, ÷, \over) -> SVG
+        if (trimmed.contains("\\frac") || trimmed.contains("\\dfrac") || trimmed.contains("\\tfrac") ||
+            trimmed.contains("\\cfrac") || trimmed.contains("\\div") || trimmed.contains("÷") || trimmed.contains("\\over")) return true
 
-        // 5. Integrals & Summations (\int, \iint, \oint, \sum, \prod) -> SVG
+        // 5. Multiplication & Cross/Dot Products (\times, \cdot, ×, \ast, \prod) -> SVG
+        if (trimmed.contains("\\times") || trimmed.contains("\\cdot") || trimmed.contains("×") ||
+            trimmed.contains("\\ast") || trimmed.contains("\\bullet") || trimmed.contains("\\prod")) return true
+
+        // 6. Algebraic Factors, Factorials & Binomials (e.g. (x+a)(x+b), n!, \binom) -> SVG
+        if (trimmed.contains(Regex("""\([a-zA-Z0-9+\-*/^\s]+\)\s*\([a-zA-Z0-9+\-*/^\s]+\)"""))) return true
+        if (trimmed.contains(Regex("""\d+!|\b[nkr]!""")) || trimmed.contains("\\binom") || trimmed.contains("\\fact")) return true
+
+        // 7. Integrals & Summations (\int, \iint, \oint, \sum) -> SVG
         if (trimmed.contains("\\int") || trimmed.contains("\\iint") || trimmed.contains("\\oint") ||
-            trimmed.contains("\\sum") || trimmed.contains("\\prod")) return true
+            trimmed.contains("\\sum")) return true
 
-        // 6. Powers & Exponents (^) -> SVG
+        // 8. Powers & Exponents (^) -> SVG
         if (trimmed.contains("^")) return true
 
-        // 7. Chemistry Equations (\ce, reaction arrows, chemical equilibrium) -> SVG
+        // 9. Chemistry Equations (\ce, reaction arrows, chemical equilibrium) -> SVG
         if (trimmed.contains("\\ce{") || trimmed.contains("->") || trimmed.contains("\\to") ||
             trimmed.contains("\\rightarrow") || trimmed.contains("\\rightleftharpoons") ||
             trimmed.contains("⇌") || trimmed.contains("⇄") || trimmed.contains("⟶")) return true
 
-        // 8. Physics Vectors & Directions (\vec, \hat, \mathbf) -> SVG
+        // 10. Physics Vectors & Directions (\vec, \hat, \mathbf) -> SVG
         if (trimmed.contains("\\vec") || trimmed.contains("\\hat") || trimmed.contains("\\mathbf") ||
             trimmed.contains("⃗") || trimmed.contains("̂")) return true
 
-        // 9. Square roots & Radicals (\sqrt) -> SVG
+        // 11. Square roots & Radicals (\sqrt) -> SVG
         if (trimmed.contains("\\sqrt") || trimmed.contains("√")) return true
 
-        // 10. Matrices, Piecewise Cases, Complex Subscripts -> SVG
+        // 12. Matrices, Piecewise Cases, Complex Subscripts -> SVG
         if (trimmed.contains("\\matrix") || trimmed.contains("\\pmatrix") || trimmed.contains("\\bmatrix") ||
             trimmed.contains("\\cases") || trimmed.contains("\\begin{")) return true
         if (trimmed.contains("_{") && trimmed.contains("}")) return true
 
-        // 11. Greek letters & Math Operators -> SVG
+        // 13. Greek letters & Math Operators -> SVG
         if (trimmed.contains("\\alpha") || trimmed.contains("\\beta") || trimmed.contains("\\gamma") ||
             trimmed.contains("\\delta") || trimmed.contains("\\theta") || trimmed.contains("\\lambda") ||
             trimmed.contains("\\omega") || trimmed.contains("\\pi") || trimmed.contains("\\mu") ||
             trimmed.contains("\\sigma") || trimmed.contains("\\phi") || trimmed.contains("\\Delta") ||
             trimmed.contains("\\epsilon") || trimmed.contains("\\varepsilon")) return true
 
-        if (trimmed.contains("\\cdot") || trimmed.contains("\\times") || trimmed.contains("\\pm") ||
-            trimmed.contains("\\mp") || trimmed.contains("\\leq") || trimmed.contains("\\geq") ||
-            trimmed.contains("\\neq") || trimmed.contains("\\approx") || trimmed.contains("\\infty") ||
-            trimmed.contains("\\partial") || trimmed.contains("\\nabla")) return true
+        if (trimmed.contains("\\pm") || trimmed.contains("\\mp") || trimmed.contains("\\leq") ||
+            trimmed.contains("\\geq") || trimmed.contains("\\neq") || trimmed.contains("\\approx") ||
+            trimmed.contains("\\infty") || trimmed.contains("\\partial") || trimmed.contains("\\nabla")) return true
 
         if (trimmed.contains("\\sin") || trimmed.contains("\\cos") || trimmed.contains("\\tan") ||
             trimmed.contains("\\log") || trimmed.contains("\\ln")) return true
 
-        // Mathematical equality with operators
+        // Mathematical equality with operators or division slash
         if (trimmed.contains("=") && (trimmed.contains("+") || trimmed.contains("-") || trimmed.contains("*") || trimmed.contains("/"))) return true
+        if (trimmed.contains("/") && (trimmed.contains("+") || trimmed.contains("-") || trimmed.contains("^") || trimmed.contains("\\"))) return true
 
         return false
     }

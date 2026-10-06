@@ -1617,28 +1617,36 @@ object MathFormatter {
         if (s.isBlank()) return false
 
         // 1. Square roots: \sqrt{...}, \sqrt[...]
-        if (s.contains("\\sqrt{") || s.contains("\\sqrt[")) return true
+        if (s.contains("\\sqrt{") || s.contains("\\sqrt[") || s.contains("√")) return true
 
-        // 2. 2D Vertical fractions: \frac{...}{...}, \dfrac, \cfrac, \tfrac
-        if (s.contains("\\frac{") || s.contains("\\dfrac{") || s.contains("\\cfrac{") || s.contains("\\tfrac{")) return true
+        // 2. 2D Vertical fractions & Divisions: \frac, \dfrac, \cfrac, \tfrac, \div, ÷
+        if (s.contains("\\frac{") || s.contains("\\dfrac{") || s.contains("\\cfrac{") || s.contains("\\tfrac{") ||
+            s.contains("\\div") || s.contains("÷") || s.contains("\\over")) return true
 
-        // 3. Physics vector arrows, unit hats: \vec{...}, \hat{...}, \overrightarrow{...}
+        // 3. Multiplication & Dot/Cross products: \times, \cdot, ×
+        if (s.contains("\\times") || s.contains("\\cdot") || s.contains("×") || s.contains("\\ast") || s.contains("\\prod")) return true
+
+        // 4. Algebraic Factors, Factorials & Binomials: (x+a)(x+b), n!, \binom
+        if (s.contains(Regex("""\([a-zA-Z0-9+\-*/^\s]+\)\s*\([a-zA-Z0-9+\-*/^\s]+\)"""))) return true
+        if (s.contains(Regex("""\d+!|\b[nkr]!""")) || s.contains("\\binom{")) return true
+
+        // 5. Physics vector arrows, unit hats: \vec{...}, \hat{...}, \overrightarrow{...}
         if (s.contains("\\vec{") || s.contains("\\hat{") || s.contains("\\overrightarrow{") ||
             s.contains("\\vec ") || s.contains("\\hat i") || s.contains("\\hat j") || s.contains("\\hat k")) return true
 
-        // 4. Chemistry reactions / mhchem
+        // 6. Chemistry reactions / mhchem
         if (s.contains("\\ce{") || s.contains("\\chemfig{") || s.contains("\\rightleftharpoons") || s.contains("\\leftrightharpoons")) return true
 
-        // 5. Matrices, determinants, systems
+        // 7. Matrices, determinants, systems
         if (s.contains("\\begin{matrix}") || s.contains("\\begin{pmatrix}") || s.contains("\\begin{bmatrix}") ||
             s.contains("\\begin{vmatrix}") || s.contains("\\begin{array}") || s.contains("\\begin{aligned}")) return true
 
-        // 6. Calculus with limits / bounds
+        // 8. Calculus with limits / bounds
         if (s.contains("\\int_") || s.contains("\\int^") || s.contains("\\sum_") || s.contains("\\sum^") ||
             s.contains("\\prod_") || s.contains("\\prod^") || s.contains("\\lim_") || s.contains("\\oint")) return true
 
-        // 7. Binomials
-        if (s.contains("\\binom{")) return true
+        // 9. Powers with exponents
+        if (s.contains("^{") || s.contains("^-")) return true
 
         return false
     }

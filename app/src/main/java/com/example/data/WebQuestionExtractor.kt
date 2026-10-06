@@ -62,6 +62,16 @@ object WebQuestionExtractor {
     private val HTML_TAG_PATTERN = Pattern.compile("""<[^>]+>""")
 
     /**
+     * Checks if a URL directly points to an image file or graphic resource.
+     */
+    fun isDirectImageUrl(url: String): Boolean {
+        val clean = url.trim().lowercase(Locale.ROOT).substringBefore("?").substringBefore("#")
+        return clean.endsWith(".png") || clean.endsWith(".jpg") || clean.endsWith(".jpeg") ||
+                clean.endsWith(".webp") || clean.endsWith(".svg") || clean.endsWith(".gif") ||
+                clean.endsWith(".avif") || clean.contains("/image/") || clean.contains("/images/")
+    }
+
+    /**
      * Checks whether an input string represents a website domain or full URL.
      */
     fun isWebTarget(input: String): Boolean {
@@ -73,7 +83,8 @@ object WebQuestionExtractor {
         ) return true
         if (trimmed.contains("neetprep") || trimmed.contains("allen") || trimmed.contains("testbook") ||
             trimmed.contains("examgoal") || trimmed.contains("pw.live") || trimmed.contains("physicswallah") ||
-            trimmed.contains("aakash") || trimmed.contains("embibe")
+            trimmed.contains("aakash") || trimmed.contains("embibe") || trimmed.contains("doubtnut") ||
+            trimmed.contains("shaalaa") || trimmed.contains("toppr")
         ) return true
         return false
     }
@@ -102,6 +113,26 @@ object WebQuestionExtractor {
      */
     suspend fun fetchAndExtract(rawInput: String): WebExtractionResult = withContext(Dispatchers.IO) {
         val (domain, fullUrl) = normalizeUrl(rawInput)
+
+        // If the URL directly points to an authentic image (e.g. diagram/graph uploaded or hosted)
+        if (isDirectImageUrl(fullUrl)) {
+            return@withContext WebExtractionResult(
+                isDirectScrape = true,
+                targetDomain = domain,
+                sourceUrl = fullUrl,
+                extractedText = "Target Diagram Image: $fullUrl (Direct image provided by student)",
+                extractedQuestions = listOf(
+                    WebQuestionItem(
+                        itemNumber = 1,
+                        questionText = "Solve the problem based on the provided scientific figure/diagram.",
+                        diagramImageUrl = fullUrl,
+                        diagramAlt = "Authentic Question Diagram Figure"
+                    )
+                ),
+                verifiedDiagramImages = setOf(fullUrl),
+                statusMessage = "1 Verified diagram image bound successfully"
+            )
+        }
 
         val hasDeepPath = try {
             val uri = URI(fullUrl)
@@ -374,31 +405,25 @@ object WebQuestionExtractor {
             
             $negativePromptClause
             
-            CRITICAL ZERO-MISMATCH & ZERO-ADS DIAGRAM RULES (MANDATORY):
-            1. STRICT 1-TO-1 MATCH ONLY:
-               - You may ONLY set "imageUrl" to a URL if that EXACT image URL was specifically bound to THAT EXACT source question in the list above.
-               - NEVER assign Question #1's diagram to Question #2 or Question #6.
-               - If a question asks about a potential energy curve, NEVER attach a spring or tube diagram to it.
-            2. ABSOLUTELY ZERO ADVERTISEMENTS OR PROMOTIONAL BANNERS:
-               - NEVER use coaching banners, test series ads, "Target Batch", "NTA-CBT Mode" banners, or marketing posters as question diagrams!
-            3. NO HALLUCINATED URLS:
-               - If a question does not have a verified bound diagram in the source above, "imageUrl" MUST BE null.
-               - NEVER invent, guess, or synthesize image URLs.
-            4. ACCURATE DIAGRAM SCHEMATIC FALLBACK:
-               - If a question tests a diagram, graph, or anatomical structure (e.g. NCERT biology, ray optics, circuit, velocity-time graph):
+            CRITICAL MANDATE FOR TARGET QUESTION COUNT ($questionCount QUESTIONS) & ZERO DUPLICATION:
+            1. EXACT TARGET COUNT: You MUST return a JSON array containing EXACTLY $questionCount complete question objects.
+            2. SOURCE QUESTIONS & AUTHENTIC IMAGE URL BINDING:
+               - For all extracted source questions listed above, preserve the authentic problem statements and retain their EXACT "imageUrl" without dropping or nullifying them.
+            3. UNIQUE EXPANSION FOR REMAINING QUESTIONS (NO DUPLICATES EVER):
+               - For questions from #${(extraction.extractedQuestions.size + 1).coerceAtMost(questionCount)} to #$questionCount:
+                 You MUST generate COMPLETELY UNIQUE, AUTHENTIC, HIGH-YIELD questions covering DIFFERENT subtopics, laws, formulas, reactions, and concepts in "$chapter" ($subject).
+               - ABSOLUTELY ZERO DUPLICATION: NEVER repeat the same question, NEVER change only numbers, NEVER copy-paste Question #1 across multiple items!
+            4. DIAGRAMS & GRAPHS FOR ALL DIAGRAM-BASED QUESTIONS:
+               - When testing diagrams, graphs, circuits, ray optics, genetics, or anatomy:
                  * Set "hasImage": true
-                 * If an exact verified bound URL exists for this question, set "imageUrl": "[the exact bound URL]". Otherwise, set "imageUrl": null.
-                 * In "diagramLabel", provide an accurate description of the figure and what parts/labels A, B, C, D indicate.
-                 * In "diagramSvg", provide a clean readable inline ASCII schematic or SVG string.
+                 * For questions with a verified source image, keep its exact "imageUrl".
+                 * For other diagram-based questions, provide a complete vector graphic in "diagramSvg" (e.g. `<svg viewBox="0 0 400 200" xmlns="http://www.w3.org/2000/svg">...</svg>`) or clean schematic representation.
+                 * In "diagramLabel", describe the figure clearly (e.g. "Figure: Ray optics refraction through prism with angle of deviation δ" or "Figure: Bridge circuit with galvanometer").
                  * Set "diagramType" to "BIOLOGY_NCERT", "CIRCUIT", "RAY_OPTICS", "GENETICS", or "GRAPH".
-            5. For questions without figures, set "hasImage": false, "imageUrl": null, "diagramLabel": null, "diagramSvg": null.
+            5. For purely theoretical or non-figure questions: set "hasImage": false, "imageUrl": null, "diagramLabel": null, "diagramSvg": null.
+            6. Ensure options (A, B, C, D) are clear, unambiguous, mutually exclusive with exactly ONE correct option. Include step-by-step NCERT solution in "explanation".
             
-            CRITICAL ZERO-REPETITION MANDATE:
-            - Every single question must be 100% unique.
-            - Ensure options (A, B, C, D) are mutually exclusive and strictly one correct option.
-            - Include step-by-step solution in "explanation".
-            
-            Return ONLY a valid JSON array of $questionCount question objects:
+            Return ONLY a valid JSON array of $questionCount question objects without markdown wrapping:
             [
               {
                 "id": 1,

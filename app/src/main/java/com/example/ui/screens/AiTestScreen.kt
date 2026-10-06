@@ -58,6 +58,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.decode.SvgDecoder
+import coil.request.ImageRequest
 import com.example.data.*
 import com.example.ui.AppViewModel
 import com.example.ui.components.AiQuestionSolutionDeepExplainerDialog
@@ -1424,8 +1426,8 @@ fun CbtQuestionView(
                     fontSize = (15.5f * fontScale).sp
                 )
 
-                // Visual / Diagram / NCERT Figure Card if present (strictly no spoilers during test)
-                if (question.hasImage || !question.diagramLabel.isNullOrBlank() || !question.diagramSvg.isNullOrBlank() || !question.imageUrl.isNullOrBlank()) {
+                // Visual / Diagram / NCERT Figure Card if present (strictly authentic source images only)
+                if (!question.imageUrl.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(10.dp))
                     QuestionDiagramCard(
                         question = question,
@@ -3399,8 +3401,8 @@ fun ScorecardAndSolutionsView(
                         )
                     }
 
-                    // Visual / Diagram Card if present (solution mode displays educational notes)
-                    if (q.hasImage || !q.diagramLabel.isNullOrBlank() || !q.diagramSvg.isNullOrBlank() || !q.imageUrl.isNullOrBlank()) {
+                    // Visual / Diagram Card if present (strictly authentic source images only)
+                    if (!q.imageUrl.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(8.dp))
                         QuestionDiagramCard(
                             question = q,
@@ -3515,41 +3517,21 @@ fun ScorecardAndSolutionsView(
                         }
                     }
 
-                    if (q.explanation.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Surface(
-                            color = if (isDark) Color(0x146366F1) else Color(0xFFEEF2FF),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.25f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Lightbulb, contentDescription = null, tint = Color(0xFF6366F1), modifier = Modifier.size(15.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Step-by-Step AI Derivation & Concept:", fontWeight = FontWeight.ExtraBold, fontSize = 11.sp, color = Color(0xFF6366F1))
-                                }
-                                Spacer(modifier = Modifier.height(6.dp))
-                                MathJaxView(text = q.explanation, isDark = isDark, fontSize = 12.5.sp)
-                            }
-                        }
-                    }
-
                     // ✨ PROMINENT LAKSHYA AI DEEP BREAKDOWN & DOUBT SOLVER BUTTON
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                     Button(
                         onClick = { activeExplainerQuestion = q },
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color(0xFF6366F1)
                         ),
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 42.dp)
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
                     ) {
                         Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             "✨ Ask Lakshya AI Deep Breakdown & Doubts",
-                            fontSize = 11.5.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Black,
                             color = Color.White
                         )
@@ -5603,186 +5585,169 @@ fun QuestionDiagramCard(
     autoInvertImages: Boolean = false,
     modifier: Modifier = Modifier
 ) {
-    val isAdOrInvalid = QuestionImageFilter.isAdOrPromotionalImage(question.imageUrl)
-    var imageLoadFailed by remember(question.imageUrl) { mutableStateOf(false) }
-    val hasValidUrl = !question.imageUrl.isNullOrBlank() && !isAdOrInvalid && !imageLoadFailed
-    val imgFile = remember(question.imageUrl) {
-        if (!question.imageUrl.isNullOrBlank() && (question.imageUrl!!.startsWith("/") || question.imageUrl!!.startsWith("file:"))) {
-            val path = question.imageUrl!!.removePrefix("file://")
+    val context = LocalContext.current
+    val rawUrl = question.imageUrl?.trim()
+    if (rawUrl.isNullOrBlank()) return
+
+    var loadAttempt by remember(rawUrl) { mutableIntStateOf(0) }
+    var imageLoadSuccess by remember(rawUrl) { mutableStateOf(false) }
+
+    val imgFile = remember(rawUrl) {
+        if (rawUrl.startsWith("/") || rawUrl.startsWith("file:")) {
+            val path = rawUrl.removePrefix("file://")
             java.io.File(path)
         } else null
     }
 
-    if (hasValidUrl) {
-        var manualInvertOverride by remember(question.id, autoInvertImages) {
-            mutableStateOf<Boolean?>(null)
-        }
-        var showZoomDialog by remember { mutableStateOf(false) }
-        val shouldInvert = manualInvertOverride ?: autoInvertImages
-        val context = LocalContext.current
-        val imageModel: Any = remember(question.imageUrl, imgFile) {
-            if (imgFile != null) {
-                imgFile
-            } else {
-                val rawUrl = question.imageUrl!!.trim()
-                if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
-                    coil.request.ImageRequest.Builder(context)
-                        .data(rawUrl)
-                        .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                        .crossfade(true)
-                        .build()
-                } else {
-                    rawUrl
-                }
+    val activeImageModel: Any = remember(rawUrl, imgFile, loadAttempt) {
+        if (imgFile != null) {
+            imgFile
+        } else if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+            val targetUrl = when (loadAttempt) {
+                0 -> rawUrl
+                1 -> if (rawUrl.contains("?")) rawUrl.substringBefore("?") else rawUrl
+                else -> rawUrl
             }
-        }
-
-        if (showZoomDialog) {
-            androidx.compose.ui.window.Dialog(
-                onDismissRequest = { showZoomDialog = false },
-                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-            ) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.95f),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        AsyncImage(
-                            model = imageModel,
-                            contentDescription = "Zoomed Diagram",
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(16.dp),
-                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                            colorFilter = if (shouldInvert) ColorFilter.colorMatrix(CbtThemeManager.InvertColorMatrix) else null
-                        )
-                        IconButton(
-                            onClick = { showZoomDialog = false },
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .statusBarsPadding()
-                                .padding(16.dp)
-                                .size(40.dp)
-                                .background(Color.White.copy(alpha = 0.2f), CircleShape)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
-                        }
+            val domain = try { java.net.URI(targetUrl).host ?: "" } catch (_: Exception) { "" }
+            ImageRequest.Builder(context)
+                .data(targetUrl)
+                .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                .apply {
+                    if (domain.isNotBlank()) {
+                        setHeader("Referer", "https://$domain/")
                     }
                 }
-            }
+                .crossfade(true)
+                .build()
+        } else {
+            rawUrl
         }
+    }
 
-        Card(
-            colors = CardDefaults.cardColors(containerColor = if (isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC)),
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, if (isDark) Color(0x33FFFFFF) else Color(0xFFE2E8F0)),
-            modifier = modifier.fillMaxWidth()
+    var manualInvertOverride by remember(question.id, autoInvertImages) {
+        mutableStateOf<Boolean?>(null)
+    }
+    var showZoomDialog by remember { mutableStateOf(false) }
+    val shouldInvert = manualInvertOverride ?: autoInvertImages
+
+    // Full screen zoom dialog
+    if (showZoomDialog) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showZoomDialog = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
         ) {
-            Column(modifier = Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(modifier = Modifier.fillMaxWidth().clickable { showZoomDialog = true }) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.95f),
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
                     AsyncImage(
-                        model = imageModel,
-                        contentDescription = question.diagramLabel ?: "Question Diagram",
-                        onError = { imageLoadFailed = true },
+                        model = activeImageModel,
+                        contentDescription = "Zoomed Diagram",
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 140.dp, max = 340.dp)
-                            .clip(RoundedCornerShape(8.dp)),
+                            .fillMaxSize()
+                            .padding(16.dp),
                         contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                         colorFilter = if (shouldInvert) ColorFilter.colorMatrix(CbtThemeManager.InvertColorMatrix) else null
                     )
-
-                    // Quick Toggle for Anti-Glare Invert directly on diagram
-                    Surface(
-                        onClick = { manualInvertOverride = !shouldInvert },
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (shouldInvert) Color(0xFF6366F1).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.6f),
+                    IconButton(
+                        onClick = { showZoomDialog = false },
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(4.dp)
+                            .statusBarsPadding()
+                            .padding(16.dp)
+                            .size(40.dp)
+                            .background(Color.White.copy(alpha = 0.2f), CircleShape)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                        ) {
-                            Text(
-                                if (shouldInvert) "🌓 Anti-Glare (ON)" else "☀️ Normal",
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                        }
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White)
                     }
-
-                    // Tap to zoom hint
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color.Black.copy(alpha = 0.5f),
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(4.dp)
-                    ) {
-                        Text(
-                            "🔍 Tap to Zoom",
-                            fontSize = 8.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-                if (!question.diagramLabel.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(question.diagramLabel, fontSize = 11.sp, color = if (isDark) Color(0x99FFFFFF) else Color(0xFF64748B))
                 }
             }
         }
-    } else if (!question.diagramSvg.isNullOrBlank() || !question.diagramLabel.isNullOrBlank() || question.hasImage) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = if (isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC)),
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, if (isDark) Color(0x33FFFFFF) else Color(0xFFE2E8F0)),
-            modifier = modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = if (isDark) Color(0xFF1E293B) else Color(0xFFF8FAFC)),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, if (isDark) Color(0x33FFFFFF) else Color(0xFFE2E8F0)),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showZoomDialog = true },
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = activeImageModel,
+                    contentDescription = question.diagramLabel ?: "Question Diagram",
+                    onSuccess = {
+                        imageLoadSuccess = true
+                    },
+                    onError = {
+                        if (loadAttempt == 0 && rawUrl.contains("?")) {
+                            loadAttempt = 1
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 160.dp, max = 360.dp)
+                        .clip(RoundedCornerShape(8.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    colorFilter = if (shouldInvert) ColorFilter.colorMatrix(CbtThemeManager.InvertColorMatrix) else null
+                )
+
+                // Quick Toggle for Anti-Glare Invert directly on diagram
+                Surface(
+                    onClick = { manualInvertOverride = !shouldInvert },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (shouldInvert) Color(0xFF6366F1).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.6f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
                 ) {
-                    Text("📐", fontSize = 14.sp)
-                    Text(
-                        "Concept Figure / Scientific Diagram Specification",
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF6366F1)
-                    )
-                }
-                if (!question.diagramLabel.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        question.diagramLabel,
-                        fontSize = 11.5.sp,
-                        color = if (isDark) Color(0xEEFFFFFF) else Color(0xFF1E293B),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                }
-                if (!question.diagramSvg.isNullOrBlank()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Surface(
-                        color = if (isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
                     ) {
                         Text(
-                            question.diagramSvg,
-                            fontSize = 10.5.sp,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            color = if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7),
-                            modifier = Modifier.padding(8.dp),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            if (shouldInvert) "🌓 Invert (ON)" else "☀️ Normal",
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
                         )
                     }
                 }
+
+                // Tap to zoom hint
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color.Black.copy(alpha = 0.5f),
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(4.dp)
+                ) {
+                    Text(
+                        "🔍 Tap to Zoom",
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            val labelText = question.diagramLabel?.trim()
+            if (!labelText.isNullOrBlank() && !labelText.startsWith("<svg", ignoreCase = true) && !labelText.startsWith("[", ignoreCase = true)) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = labelText,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (isDark) Color(0xCCFFFFFF) else Color(0xFF475569),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
             }
         }
     }

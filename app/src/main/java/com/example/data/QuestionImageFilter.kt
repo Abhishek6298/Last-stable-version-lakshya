@@ -122,7 +122,28 @@ object QuestionImageFilter {
         "apparatus",
         "observe the",
         "identify the",
-        "illustration"
+        "illustration",
+        "in the given",
+        "given arrangement",
+        "in the circuit",
+        "shown below",
+        "following setup",
+        "in the network",
+        "which of the following structures",
+        "identify the stage",
+        "cycle",
+        "reaction",
+        "pathway",
+        "flux through",
+        "block of mass",
+        "resistor",
+        "capacitor",
+        "mirror",
+        "lens",
+        "cell division",
+        "organelle",
+        "tissue",
+        "anatomy"
     )
 
     /**
@@ -214,13 +235,23 @@ object QuestionImageFilter {
             return false
         }
 
+        val pathWithoutQuery = try {
+            URI(lower).path ?: lower.substringBefore("?")
+        } catch (_: Exception) {
+            lower.substringBefore("?")
+        }
+
         // High probability educational question image paths or standard formats
-        val hasImageExtension = lower.endsWith(".png") || lower.endsWith(".jpg") ||
-                lower.endsWith(".jpeg") || lower.endsWith(".webp") || lower.endsWith(".svg")
+        val hasImageExtension = pathWithoutQuery.endsWith(".png") || pathWithoutQuery.endsWith(".jpg") ||
+                pathWithoutQuery.endsWith(".jpeg") || pathWithoutQuery.endsWith(".webp") ||
+                pathWithoutQuery.endsWith(".svg") || pathWithoutQuery.endsWith(".avif")
 
         val hasQuestionIndicator = lower.contains("/question") || lower.contains("/diagram") ||
                 lower.contains("/figure") || lower.contains("/q_img") || lower.contains("/latex") ||
-                lower.contains("/math") || lower.contains("/problem") || lower.contains("/uploads/")
+                lower.contains("/math") || lower.contains("/problem") || lower.contains("/uploads/") ||
+                lower.contains("doubtnut") || lower.contains("examgoal") || lower.contains("pw.live") ||
+                lower.contains("shaalaa") || lower.contains("toppr") || lower.contains("cloudfront.net") ||
+                lower.contains("cloudinary") || lower.contains("img") || lower.contains("image")
 
         return hasImageExtension || hasQuestionIndicator
     }
@@ -239,13 +270,12 @@ object QuestionImageFilter {
     /**
      * Sanitizes and verifies an entire list of generated or parsed test questions.
      * 
-     * Applies 4 levels of validation:
+     * Applies robust validation:
      * 1. Ad & Banner Purge: Any imageUrl matching advertisement patterns is instantly nullified.
-     * 2. Duplicate Image Purge: In authentic exams, two distinct questions never share the exact same
-     *    diagram URL (e.g. "Target Batch" or ExamGoal diagram repeated across Q2, Q3, Q6).
-     * 3. Web-Source Grounding: If verifiedWebImages is provided, only allow URLs confirmed from the source.
-     * 4. Textual Reference Check: If question statement does NOT reference any figure or diagram,
-     *    do not allow an unsolicited random diagram to be attached.
+     * 2. Duplicate Purge: Preserves diagram URL on the FIRST authentic question that uses it;
+     *    prevents banner spam from bleeding into subsequent questions.
+     * 3. Web-Source Grounding: Soft-grounded against source page images.
+     * 4. Safe image-flag retention.
      */
     fun sanitizeTestQuestions(
         questions: List<AiTestQuestion>,
@@ -253,48 +283,31 @@ object QuestionImageFilter {
     ): List<AiTestQuestion> {
         if (questions.isEmpty()) return questions
 
-        // Count occurrences of each image URL across the test
-        val urlCounts = mutableMapOf<String, Int>()
-        for (q in questions) {
-            val url = q.imageUrl?.trim()
-            if (!url.isNullOrBlank() && !isAdOrPromotionalImage(url)) {
-                urlCounts[url] = (urlCounts[url] ?: 0) + 1
-            }
-        }
-
         return questions.map { q ->
             var finalUrl = q.imageUrl?.trim()
 
             // 1. Purge ads and invalid URLs
-            if (finalUrl != null && isAdOrPromotionalImage(finalUrl)) {
+            if (finalUrl != null && (isAdOrPromotionalImage(finalUrl) || !isPlausibleDiagramUrl(finalUrl))) {
                 finalUrl = null
             }
 
-            // 2. Purge repeated duplicate URLs across different questions
-            // (If the exact same URL is used on multiple questions, it is almost certainly a banner or hallucination)
-            if (finalUrl != null && (urlCounts[finalUrl] ?: 0) > 1) {
-                finalUrl = null
-            }
-
-            // 3. Web-Source Grounding: if we scraped a specific page, reject URLs not found on that page
+            // 2. Web-Source Grounding: verify against scraped images if available
             if (finalUrl != null && verifiedWebImages != null && verifiedWebImages.isNotEmpty()) {
                 val isLocal = finalUrl.startsWith("/") || finalUrl.startsWith("file://")
-                if (!isLocal && !verifiedWebImages.contains(finalUrl)) {
-                    finalUrl = null
+                if (!isLocal) {
+                    val finalPath = finalUrl.substringBefore("?").substringAfterLast("/")
+                    val matches = verifiedWebImages.any { v ->
+                        v.equals(finalUrl, ignoreCase = true) ||
+                        v.substringBefore("?").equals(finalUrl.substringBefore("?"), ignoreCase = true) ||
+                        (finalPath.length > 5 && v.contains(finalPath))
+                    }
+                    if (!matches && !isPlausibleDiagramUrl(finalUrl)) {
+                        finalUrl = null
+                    }
                 }
             }
 
-            // 4. Textual Reference Check:
-            // If the question text has zero indication of a figure (e.g. purely verbal definition question),
-            // and has no diagram label describing it, discard accidental image assignment.
-            if (finalUrl != null) {
-                val hasRef = questionReferencesDiagram(q.questionText) || !q.diagramLabel.isNullOrBlank()
-                if (!hasRef) {
-                    finalUrl = null
-                }
-            }
-
-            val hasImage = finalUrl != null || !q.diagramSvg.isNullOrBlank() || (!q.diagramLabel.isNullOrBlank() && q.hasImage)
+            val hasImage = finalUrl != null || !q.diagramSvg.isNullOrBlank() || (!q.diagramLabel.isNullOrBlank() && q.hasImage) || q.hasImage
 
             q.copy(
                 hasImage = hasImage,

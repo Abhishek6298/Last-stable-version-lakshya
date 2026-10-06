@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer Cyan Target Ring -->
+    <path
+        android:pathData="M 54,28 A 26,26 0 1,0 54,80 A 26,26 0 1,0 54,28"
+        android:strokeColor="#38BDF8"
+        android:strokeWidth="3.2"
+        android:strokeLineCap="round" />
+
+    <!-- Middle Amber Target Ring -->
+    <path
+        android:pathData="M 54,37 A 17,17 0 1,0 54,71 A 17,17 0 1,0 54,37"
+        android:strokeColor="#F59E0B"
+        android:strokeWidth="3"
+        android:strokeLineCap="round" />
+
+    <!-- Bullseye Red Core -->
+    <path
+        android:fillColor="#EF4444"
+        android:pathData="M 54,46 A 8,8 0 1,0 54,62 A 8,8 0 1,0 54,46" />
+
+    <!-- Center Gold Dot -->
+    <path
+        android:fillColor="#FDE047"
+        android:pathData="M 54,51 A 3,3 0 1,0 54,57 A 3,3 0 1,0 54,51" />
+
+    <!-- Arrow Shaft (Gold) -->
+    <path
+        android:pathData="M 78,30 L 54,54"
+        android:strokeColor="#FACC15"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round" />
+
+    <!-- Arrow Fletching (Wings at top-right) -->
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M 78,30 L 84,24 L 81,22 L 75,28 Z" />
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M 78,30 L 84,36 L 86,33 L 80,27 Z" />
+    <path
+        android:fillColor="#FDE047"
+        android:pathData="M 78,30 L 86,22 L 83,21 L 76,28 Z" />
+
+    <!-- Sharp Arrow Tip at Bullseye Center -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 54,54 L 60,49 L 49,60 Z" />
+
+    <!-- Glowing Target Crosshairs -->
+    <path
+        android:pathData="M 54,20 L 54,25 M 54,83 L 54,88 M 20,54 L 25,54 M 83,54 L 88,54"
+        android:strokeColor="#60A5FA"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round" />
+
+    <!-- Sparkle Stars -->
+    <path
+        android:fillColor="#FDE047"
+        android:pathData="M 32,32 L 33.5,28 L 35,32 L 39,33.5 L 35,35 L 33.5,39 L 32,35 L 28,33.5 Z" />
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M 74,72 L 75,69 L 76,72 L 79,73 L 76,74 L 75,77 L 74,74 L 71,73 Z" />
+    <path
+        android:fillColor="#F43F5E"
+        android:pathData="M 28,70 L 29,67 L 30,70 L 33,71 L 30,72 L 29,75 L 28,72 L 25,71 Z" />
+</vector>

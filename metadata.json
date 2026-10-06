@@ -1,0 +1,8 @@
+{
+  "name": "Lakshya - NEET & JEE Prep",
+  "description": "Comprehensive preparation platform for NEET & JEE aspirants with AI mock tests, study timers, mistake notebook, flashcards, and target tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

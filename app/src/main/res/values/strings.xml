@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">Lakshya</string>
+    <string name="widget_neet_countdown_desc">Live Exam Countdown, Daily Goal Progress &amp; 1-Tap Quick Action Hub</string>
+    <string name="widget_interactive_tasks_desc">Interactive Daily DPP &amp; Revision Tasks Checklist with in-widget toggling</string>
+    <string name="widget_quick_notes_desc">Pinned Study Notes &amp; Formula Stickies with in-widget next/prev</string>
+    <string name="widget_mistake_notebook_desc">Mistake Notebook Quick Revision Card with in-widget randomizer</string>
+    <string name="widget_upcoming_mock_test_desc">Upcoming NEET &amp; JEE Mock Test Schedule, Syllabus &amp; 1-Tap CBT Launcher</string>
+</resources>

@@ -1426,8 +1426,9 @@ fun CbtQuestionView(
                     fontSize = (15.5f * fontScale).sp
                 )
 
-                // Visual / Diagram / NCERT Figure Card if present (strictly authentic source images only)
-                if (!question.imageUrl.isNullOrBlank()) {
+                // Visual / Diagram / NCERT Figure Card if present
+                val hasDiagram = question.hasImage || !question.imageUrl.isNullOrBlank() || !question.diagramSvg.isNullOrBlank() || !question.diagramLabel.isNullOrBlank()
+                if (hasDiagram) {
                     Spacer(modifier = Modifier.height(10.dp))
                     QuestionDiagramCard(
                         question = question,
@@ -3401,8 +3402,9 @@ fun ScorecardAndSolutionsView(
                         )
                     }
 
-                    // Visual / Diagram Card if present (strictly authentic source images only)
-                    if (!q.imageUrl.isNullOrBlank()) {
+                    // Visual / Diagram Card if present
+                    val hasDiagram = q.hasImage || !q.imageUrl.isNullOrBlank() || !q.diagramSvg.isNullOrBlank() || !q.diagramLabel.isNullOrBlank()
+                    if (hasDiagram) {
                         Spacer(modifier = Modifier.height(8.dp))
                         QuestionDiagramCard(
                             question = q,
@@ -5587,40 +5589,68 @@ fun QuestionDiagramCard(
 ) {
     val context = LocalContext.current
     val rawUrl = question.imageUrl?.trim()
-    if (rawUrl.isNullOrBlank()) return
+    val rawSvg = question.diagramSvg?.trim()
+    val rawLabel = question.diagramLabel?.trim()
 
-    var loadAttempt by remember(rawUrl) { mutableIntStateOf(0) }
-    var imageLoadSuccess by remember(rawUrl) { mutableStateOf(false) }
+    val hasSvg = !rawSvg.isNullOrBlank() && (rawSvg.contains("<svg", ignoreCase = true) || rawSvg.startsWith("<?xml", ignoreCase = true))
+    val hasUrl = !rawUrl.isNullOrBlank()
+    val hasSchematic = !rawSvg.isNullOrBlank() && !hasSvg
+    val hasLabel = !rawLabel.isNullOrBlank()
+
+    if (!hasUrl && !hasSvg && !hasSchematic && !hasLabel) return
+
+    var loadAttempt by remember(rawUrl, rawSvg) { mutableIntStateOf(0) }
+    var imageLoadSuccess by remember(rawUrl, rawSvg) { mutableStateOf(false) }
 
     val imgFile = remember(rawUrl) {
-        if (rawUrl.startsWith("/") || rawUrl.startsWith("file:")) {
+        if (!rawUrl.isNullOrBlank() && (rawUrl.startsWith("/") || rawUrl.startsWith("file:"))) {
             val path = rawUrl.removePrefix("file://")
             java.io.File(path)
         } else null
     }
 
-    val activeImageModel: Any = remember(rawUrl, imgFile, loadAttempt) {
+    val svgBytes = remember(rawSvg, hasSvg) {
+        if (hasSvg) {
+            val cleanSvg = if (!rawSvg!!.contains("xmlns=", ignoreCase = true)) {
+                rawSvg.replaceFirst(Regex("<svg", RegexOption.IGNORE_CASE), """<svg xmlns="http://www.w3.org/2000/svg"""")
+            } else rawSvg
+            cleanSvg.toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+        } else null
+    }
+
+    val activeImageModel: Any? = remember(rawUrl, imgFile, svgBytes, loadAttempt) {
         if (imgFile != null) {
             imgFile
-        } else if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
-            val targetUrl = when (loadAttempt) {
-                0 -> rawUrl
-                1 -> if (rawUrl.contains("?")) rawUrl.substringBefore("?") else rawUrl
-                else -> rawUrl
-            }
-            val domain = try { java.net.URI(targetUrl).host ?: "" } catch (_: Exception) { "" }
+        } else if (svgBytes != null) {
             ImageRequest.Builder(context)
-                .data(targetUrl)
-                .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
-                .apply {
-                    if (domain.isNotBlank()) {
-                        setHeader("Referer", "https://$domain/")
-                    }
-                }
+                .data(svgBytes)
+                .decoderFactory(SvgDecoder.Factory())
                 .crossfade(true)
                 .build()
+        } else if (!rawUrl.isNullOrBlank()) {
+            if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
+                val targetUrl = when (loadAttempt) {
+                    0 -> rawUrl
+                    1 -> if (rawUrl.contains("?")) rawUrl.substringBefore("?") else rawUrl
+                    else -> rawUrl
+                }
+                val domain = try { java.net.URI(targetUrl).host ?: "" } catch (_: Exception) { "" }
+                ImageRequest.Builder(context)
+                    .data(targetUrl)
+                    .decoderFactory(SvgDecoder.Factory())
+                    .setHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                    .apply {
+                        if (domain.isNotBlank()) {
+                            setHeader("Referer", "https://$domain/")
+                        }
+                    }
+                    .crossfade(true)
+                    .build()
+            } else {
+                rawUrl
+            }
         } else {
-            rawUrl
+            null
         }
     }
 
@@ -5631,7 +5661,7 @@ fun QuestionDiagramCard(
     val shouldInvert = manualInvertOverride ?: autoInvertImages
 
     // Full screen zoom dialog
-    if (showZoomDialog) {
+    if (showZoomDialog && activeImageModel != null) {
         androidx.compose.ui.window.Dialog(
             onDismissRequest = { showZoomDialog = false },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
@@ -5673,81 +5703,116 @@ fun QuestionDiagramCard(
         modifier = modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { showZoomDialog = true },
-                contentAlignment = Alignment.Center
-            ) {
-                AsyncImage(
-                    model = activeImageModel,
-                    contentDescription = question.diagramLabel ?: "Question Diagram",
-                    onSuccess = {
-                        imageLoadSuccess = true
-                    },
-                    onError = {
-                        if (loadAttempt == 0 && rawUrl.contains("?")) {
-                            loadAttempt = 1
-                        }
-                    },
+            if (activeImageModel != null) {
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 160.dp, max = 360.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                    colorFilter = if (shouldInvert) ColorFilter.colorMatrix(CbtThemeManager.InvertColorMatrix) else null
-                )
-
-                // Quick Toggle for Anti-Glare Invert directly on diagram
-                Surface(
-                    onClick = { manualInvertOverride = !shouldInvert },
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (shouldInvert) Color(0xFF6366F1).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.6f),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
+                        .clickable { showZoomDialog = true },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    AsyncImage(
+                        model = activeImageModel,
+                        contentDescription = question.diagramLabel ?: "Question Diagram",
+                        onSuccess = {
+                            imageLoadSuccess = true
+                        },
+                        onError = {
+                            if (loadAttempt == 0 && rawUrl?.contains("?") == true) {
+                                loadAttempt = 1
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 160.dp, max = 360.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                        colorFilter = if (shouldInvert) ColorFilter.colorMatrix(CbtThemeManager.InvertColorMatrix) else null
+                    )
+
+                    // Quick Toggle for Anti-Glare Invert directly on diagram
+                    Surface(
+                        onClick = { manualInvertOverride = !shouldInvert },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (shouldInvert) Color(0xFF6366F1).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.6f),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                if (shouldInvert) "🌓 Invert (ON)" else "☀️ Normal",
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+
+                    // Tap to zoom hint
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = Color.Black.copy(alpha = 0.5f),
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(4.dp)
                     ) {
                         Text(
-                            if (shouldInvert) "🌓 Invert (ON)" else "☀️ Normal",
-                            fontSize = 9.5.sp,
+                            "🔍 Tap to Zoom",
+                            fontSize = 8.5.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         )
                     }
                 }
-
-                // Tap to zoom hint
+            } else if (hasSchematic) {
+                // Schematic text diagram (Circuits, Ray optics, Chemistry, Biology charts)
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color.Black.copy(alpha = 0.5f),
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(4.dp)
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9),
+                    border = BorderStroke(1.dp, if (isDark) Color(0x336366F1) else Color(0xFFCBD5E1)),
+                    modifier = Modifier.fillMaxWidth().padding(4.dp)
                 ) {
-                    Text(
-                        "🔍 Tap to Zoom",
-                        fontSize = 8.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                    )
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "📐 DIAGRAM SCHEMATIC",
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF6366F1)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = rawSvg ?: "",
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            color = if (isDark) Color.White else Color(0xFF1E293B),
+                            lineHeight = 16.sp
+                        )
+                    }
                 }
             }
 
             val labelText = question.diagramLabel?.trim()
             if (!labelText.isNullOrBlank() && !labelText.startsWith("<svg", ignoreCase = true) && !labelText.startsWith("[", ignoreCase = true)) {
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = labelText,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (isDark) Color(0xCCFFFFFF) else Color(0xFF475569),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "📌 $labelText",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (isDark) Color(0xCCFFFFFF) else Color(0xFF475569),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
             }
         }
     }

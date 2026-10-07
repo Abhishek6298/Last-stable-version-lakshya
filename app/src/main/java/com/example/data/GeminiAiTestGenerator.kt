@@ -296,7 +296,6 @@ object GeminiAiTestGenerator {
                    - For diagram/figure questions:
                      * Set `"hasImage": true`
                      * In `"diagramLabel"`, provide a clear description of the figure and what parts (A, B, C, D) represent.
-                     * In `"diagramSvg"`, provide a clean, readable ASCII/Unicode schematic or SVG representation.
                      * Set `"diagramType"` to "BIOLOGY_NCERT", "ANATOMY", "CIRCUIT", "RAY_OPTICS", "GENETICS", or "GRAPH".
                 6. SPECIFIC PYQ YEAR REFERENCE: In `pyqYear`, always tag the exact exam and year, e.g.:
                    - "⚡ JEE Main 2023 (AIEEE 39Y)"
@@ -319,9 +318,9 @@ object GeminiAiTestGenerator {
                     "pyqYear": "NEET 2026 PYQ",
                     "questionText": "In the given diagram of human nephron, identify the parts labeled A, B, C, and D and select the correct option:",
                     "hasImage": true,
+                    "imageUrl": null,
                     "diagramLabel": "Figure: Diagrammatic representation of a Nephron showing Glomerulus (A), Bowman's Capsule (B), Proximal Convoluted Tubule (C), and Loop of Henle (D).",
                     "diagramType": "BIOLOGY_NCERT",
-                    "diagramSvg": "[A: Glomerulus] ──> [B: Bowman's Capsule] ──> [C: PCT] ──> [D: Loop of Henle] ──> [DCT] ──> [Collecting Duct]",
                     "optionA": "A - Glomerulus, B - Bowman's capsule, C - PCT, D - Loop of Henle",
                     "optionB": "A - Afferent arteriole, B - Glomerulus, C - DCT, D - Collecting duct",
                     "optionC": "A - Bowman's capsule, B - Glomerulus, C - Loop of Henle, D - DCT",
@@ -566,7 +565,6 @@ object GeminiAiTestGenerator {
                    - Include authentic diagram identification / label-based questions.
                    - Set `"hasImage": true`
                    - In `"diagramLabel"`, explain the diagram (e.g. "Figure: Circuit with 4 resistors in bridge configuration" or "Figure: Reflex Arc Pathway").
-                   - In `"diagramSvg"`, provide a valid self-contained SVG graphic (e.g. `<svg viewBox="0 0 400 200" xmlns="http://www.w3.org/2000/svg">...</svg>`) or clean schematic representation.
                    - Set `"diagramType"` to "BIOLOGY_NCERT", "ANATOMY", "CIRCUIT", "RAY_OPTICS", "GENETICS", or "GRAPH".
                 9. Specify exact PYQ year reference in `pyqYear` (e.g. "NEET 2026 PYQ", "JEE Main 2025 PYQ", "IIT-JEE 2022 Advanced", "AIPMT 2015").
                 10. Options must be clear and distinct (A, B, C, D) with `correctOption` being "A", "B", "C", or "D".

@@ -89,8 +89,38 @@ object QuestionImageFilter {
         "carousel",
         "hero-image",
         "hero_image",
+        "hero",
         "sponsor",
-        "affiliate"
+        "affiliate",
+        "unsplash",
+        "pixabay",
+        "pexels",
+        "shutterstock",
+        "gettyimages",
+        "istockphoto",
+        "freepik",
+        "stock-photo",
+        "stock_photo",
+        "stockphoto",
+        "stock",
+        "coffee",
+        "desk",
+        "office",
+        "meeting",
+        "lifestyle",
+        "people",
+        "student",
+        "students",
+        "teacher",
+        "faculty",
+        "laptop",
+        "computer",
+        "analytics",
+        "dashboard",
+        "blog",
+        "article",
+        "testimonial",
+        "review"
     )
 
     // Keywords in question text that indicate a visual figure, diagram, graph, or circuit is required
@@ -246,14 +276,20 @@ object QuestionImageFilter {
                 pathWithoutQuery.endsWith(".jpeg") || pathWithoutQuery.endsWith(".webp") ||
                 pathWithoutQuery.endsWith(".svg") || pathWithoutQuery.endsWith(".avif")
 
-        val hasQuestionIndicator = lower.contains("/question") || lower.contains("/diagram") ||
-                lower.contains("/figure") || lower.contains("/q_img") || lower.contains("/latex") ||
-                lower.contains("/math") || lower.contains("/problem") || lower.contains("/uploads/") ||
-                lower.contains("doubtnut") || lower.contains("examgoal") || lower.contains("pw.live") ||
-                lower.contains("shaalaa") || lower.contains("toppr") || lower.contains("cloudfront.net") ||
-                lower.contains("cloudinary") || lower.contains("img") || lower.contains("image")
+        if (!hasImageExtension) return false
 
-        return hasImageExtension || hasQuestionIndicator
+        val hasQuestionIndicator = lower.contains("/question") || lower.contains("/diagram") ||
+                lower.contains("/circuit") || lower.contains("/figure") || lower.contains("/q_img") ||
+                lower.contains("/q-img") || lower.contains("/q_images") || lower.contains("/latex") ||
+                lower.contains("/math") || lower.contains("/problem") || lower.contains("/mcq") ||
+                lower.contains("/uploads/question") || lower.contains("/solution") ||
+                lower.contains("doubtnut.com/q-images") || lower.contains("examgoal") ||
+                lower.contains("pw.live") || lower.contains("shaalaa.com") || lower.contains("toppr.com") ||
+                lower.contains("neetprep.com/question") || lower.contains("allen.in") ||
+                lower.contains("cloudfront.net/images/questions") || lower.contains("d10lpgp6xz60nq.cloudfront.net") ||
+                lower.contains("res.cloudinary.com")
+
+        return hasQuestionIndicator
     }
 
     /**

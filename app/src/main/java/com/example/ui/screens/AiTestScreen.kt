@@ -5594,10 +5594,9 @@ fun QuestionDiagramCard(
 
     val hasSvg = !rawSvg.isNullOrBlank() && (rawSvg.contains("<svg", ignoreCase = true) || rawSvg.startsWith("<?xml", ignoreCase = true))
     val hasUrl = !rawUrl.isNullOrBlank()
-    val hasSchematic = !rawSvg.isNullOrBlank() && !hasSvg
-    val hasLabel = !rawLabel.isNullOrBlank()
 
-    if (!hasUrl && !hasSvg && !hasSchematic && !hasLabel) return
+    // Strictly require a REAL image URL or real SVG drawing — no text/specification placeholders
+    if (!hasUrl && !hasSvg) return
 
     var loadAttempt by remember(rawUrl, rawSvg) { mutableIntStateOf(0) }
     var imageLoadSuccess by remember(rawUrl, rawSvg) { mutableStateOf(false) }
@@ -5765,33 +5764,6 @@ fun QuestionDiagramCard(
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                        )
-                    }
-                }
-            } else if (hasSchematic) {
-                // Schematic text diagram (Circuits, Ray optics, Chemistry, Biology charts)
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (isDark) Color(0xFF0F172A) else Color(0xFFF1F5F9),
-                    border = BorderStroke(1.dp, if (isDark) Color(0x336366F1) else Color(0xFFCBD5E1)),
-                    modifier = Modifier.fillMaxWidth().padding(4.dp)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "📐 DIAGRAM SCHEMATIC",
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.Black,
-                                color = Color(0xFF6366F1)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = rawSvg ?: "",
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            color = if (isDark) Color.White else Color(0xFF1E293B),
-                            lineHeight = 16.sp
                         )
                     }
                 }

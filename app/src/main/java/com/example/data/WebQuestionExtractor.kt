@@ -7,6 +7,8 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URI
+import java.net.URLDecoder
+import java.net.URLEncoder
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
@@ -107,12 +109,96 @@ object WebQuestionExtractor {
     }
 
     /**
+     * Autonomously discovers and resolves the exact chapter practice URL on a target educational platform
+     * using DuckDuckGo HTML query and domain-specific path patterns without requiring manual user link hunting.
+     */
+    suspend fun resolveDeepChapterUrl(domain: String, chapter: String, subject: String? = null): String? = withContext(Dispatchers.IO) {
+        if (chapter.isBlank()) return@withContext null
+        val cleanChapter = chapter.trim()
+        val cleanSubject = subject?.trim() ?: ""
+
+        // Strategy 1: Headless search query via DuckDuckGo HTML endpoint
+        try {
+            val query = "site:$domain $cleanChapter questions $cleanSubject".trim()
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val searchUrl = "https://html.duckduckgo.com/html/?q=$encodedQuery"
+
+            val searchRequest = Request.Builder()
+                .url(searchUrl)
+                .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                .addHeader("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .build()
+
+            val response = httpClient.newCall(searchRequest).await()
+            val html = response.body?.string() ?: ""
+
+            if (response.isSuccessful && html.isNotBlank()) {
+                val linkMatcher = Pattern.compile(
+                    """<a[^>]+class\s*=\s*['"][^'"]*result__url[^'"]*['"][^>]+href\s*=\s*['"]([^'"]+)['"]""",
+                    Pattern.CASE_INSENSITIVE
+                ).matcher(html)
+
+                val chapterKeywords = cleanChapter.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length > 3 }
+
+                while (linkMatcher.find()) {
+                    var candidate = linkMatcher.group(1)?.trim() ?: continue
+                    if (candidate.contains("uddg=")) {
+                        val decoded = candidate.substringAfter("uddg=").substringBefore("&")
+                        candidate = URLDecoder.decode(decoded, "UTF-8")
+                    }
+                    val lower = candidate.lowercase(Locale.ROOT)
+                    val matchesDomain = lower.contains(domain.lowercase(Locale.ROOT))
+                    val hasEducationalPath = lower.contains("question") || lower.contains("test") ||
+                            lower.contains("mcq") || lower.contains("chapter") || lower.contains("practice")
+                    val hasChapterMatch = chapterKeywords.any { lower.contains(it) }
+
+                    if (matchesDomain && (hasEducationalPath || hasChapterMatch)) {
+                        Log.i(TAG, "Autonomous Resolver found deep URL for $cleanChapter on $domain: $candidate")
+                        return@withContext candidate
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Search engine resolution failed: ${e.message}")
+        }
+
+        // Strategy 2: Domain-specific intelligent slug formatting
+        val slug = cleanChapter.lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), "-").trim('-')
+        val domainLower = domain.lowercase(Locale.ROOT)
+
+        when {
+            domainLower.contains("neetprep") -> {
+                "https://www.neetprep.com/questions?search=${URLEncoder.encode(cleanChapter, "UTF-8")}"
+            }
+            domainLower.contains("doubtnut") -> {
+                "https://www.doubtnut.com/search?q=${URLEncoder.encode("$cleanChapter questions", "UTF-8")}"
+            }
+            domainLower.contains("examgoal") -> {
+                "https://examgoal.com/search?q=${URLEncoder.encode(cleanChapter, "UTF-8")}"
+            }
+            domainLower.contains("shaalaa") -> {
+                "https://www.shaalaa.com/search?q=${URLEncoder.encode(cleanChapter, "UTF-8")}"
+            }
+            domainLower.contains("pw.live") -> {
+                "https://www.pw.live/study/test-series?search=${URLEncoder.encode(cleanChapter, "UTF-8")}"
+            }
+            else -> null
+        }
+    }
+
+    /**
      * Fetches live web content from the given URL or domain.
+     * If given a root domain and chapter, autonomously resolves and navigates to the chapter questions page.
      * Extracts text, identifies individual questions, and binds diagrams 1:1 to their exact questions
      * while completely eliminating advertisements and marketing banners.
      */
-    suspend fun fetchAndExtract(rawInput: String): WebExtractionResult = withContext(Dispatchers.IO) {
-        val (domain, fullUrl) = normalizeUrl(rawInput)
+    suspend fun fetchAndExtract(
+        rawInput: String,
+        chapter: String? = null,
+        subject: String? = null
+    ): WebExtractionResult = withContext(Dispatchers.IO) {
+        val (domain, initialUrl) = normalizeUrl(rawInput)
+        var fullUrl = initialUrl
 
         // If the URL directly points to an authentic image (e.g. diagram/graph uploaded or hosted)
         if (isDirectImageUrl(fullUrl)) {
@@ -134,12 +220,24 @@ object WebQuestionExtractor {
             )
         }
 
-        val hasDeepPath = try {
+        var hasDeepPath = try {
             val uri = URI(fullUrl)
             val path = uri.path ?: ""
             path.length > 1 && path != "/"
         } catch (_: Exception) {
             false
+        }
+
+        // Autonomous Chapter Deep Link Resolution:
+        // If user gave only a root domain (e.g. neetprep.com) and a chapter name is provided,
+        // automatically discover and navigate to the chapter questions page!
+        if (!hasDeepPath && !chapter.isNullOrBlank()) {
+            val resolved = resolveDeepChapterUrl(domain, chapter, subject)
+            if (!resolved.isNullOrBlank()) {
+                fullUrl = resolved
+                hasDeepPath = true
+                Log.i(TAG, "Autonomously resolved $domain for chapter '$chapter' to: $fullUrl")
+            }
         }
 
         if (!hasDeepPath) {
@@ -150,7 +248,7 @@ object WebQuestionExtractor {
                 extractedText = "",
                 extractedQuestions = emptyList(),
                 verifiedDiagramImages = emptySet(),
-                statusMessage = "Targeting authentic $domain question bank & syllabus patterns"
+                statusMessage = "Targeting authentic $domain question bank & syllabus patterns" + if (!chapter.isNullOrBlank()) " for $chapter" else ""
             )
         }
 
@@ -183,8 +281,35 @@ object WebQuestionExtractor {
             val cleanContentHtml = AD_CONTAINER_PATTERN.matcher(withoutLayout).replaceAll(" ")
 
             // Step 2: Extract structured question blocks with 1:1 bound diagrams
-            val structuredQuestions = extractQuestionUnitsFromHtml(cleanContentHtml, fullUrl)
-            val verifiedImages = structuredQuestions.mapNotNull { it.diagramImageUrl }.toSet()
+            val structuredQuestions = extractQuestionUnitsFromHtml(cleanContentHtml, fullUrl).toMutableList()
+            val allPageDiagramImages = mutableSetOf<String>()
+            allPageDiagramImages.addAll(structuredQuestions.mapNotNull { it.diagramImageUrl })
+
+            // Harvest any authentic standalone diagram images from the chapter page
+            val fullImgMatcher = Pattern.compile("""<img[^>]+>""", Pattern.CASE_INSENSITIVE).matcher(cleanContentHtml)
+            while (fullImgMatcher.find()) {
+                val tag = fullImgMatcher.group(0) ?: continue
+                val dataSrc = Regex("""(?:data-src|data-original|data-url|data-lazy-src|data-img)\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(1)?.trim()
+                val src = Regex("""(?<!data-)src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(1)?.trim()
+                val rawCandidate = when {
+                    !dataSrc.isNullOrBlank() && !dataSrc.startsWith("data:") -> dataSrc
+                    !src.isNullOrBlank() && !src.startsWith("data:") && !src.endsWith(".gif") -> src
+                    else -> null
+                } ?: continue
+
+                val alt = Regex("""alt\s*=\s*['"]([^'"]*)['"]""", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(1)?.trim()
+                val cls = Regex("""class\s*=\s*['"]([^'"]*)['"]""", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(1)?.trim()
+                val resolved = resolveAbsoluteUrl(fullUrl, rawCandidate)
+                if (!QuestionImageFilter.isAdOrPromotionalImage(resolved, alt, cls) &&
+                    QuestionImageFilter.isPlausibleDiagramUrl(resolved)
+                ) {
+                    allPageDiagramImages.add(resolved)
+                }
+            }
+
+            // Zero Cross-Contamination Rule: Questions ONLY receive a diagram if that exact diagram
+            // was inside that question's own block. NEVER assign random images across questions.
+            val verifiedImages = allPageDiagramImages
 
             // Step 3: Extract clean readable text for general context fallback
             val cleanText = HTML_TAG_PATTERN.matcher(cleanContentHtml).replaceAll(" ")
@@ -197,7 +322,8 @@ object WebQuestionExtractor {
                 cleanText.contains("option", ignoreCase = true) ||
                 cleanText.contains("(a)", ignoreCase = true) ||
                 cleanText.contains("(1)", ignoreCase = true) ||
-                structuredQuestions.isNotEmpty()
+                structuredQuestions.isNotEmpty() ||
+                verifiedImages.isNotEmpty()
             )
 
             WebExtractionResult(
@@ -275,20 +401,26 @@ object WebQuestionExtractor {
         var boundDiagramUrl: String? = null
         var boundDiagramAlt: String? = null
 
-        val imgMatcher = IMAGE_TAG_PATTERN.matcher(blockHtml)
+        val imgMatcher = Pattern.compile("""<img[^>]+>""", Pattern.CASE_INSENSITIVE).matcher(blockHtml)
         while (imgMatcher.find()) {
-            val rawSrc = imgMatcher.group(1)?.trim() ?: continue
-            val fullImgTag = imgMatcher.group(0) ?: ""
+            val fullImgTag = imgMatcher.group(0) ?: continue
 
-            // Extract alt text
-            val altMatch = Regex("""alt\s*=\s*['"]([^'"]*)['"]""", RegexOption.IGNORE_CASE).find(fullImgTag)
-            val alt = altMatch?.groupValues?.get(1)?.trim()
+            // Priority attribute extraction: check lazy-load and original data attributes before generic src
+            val dataSrc = Regex("""(?:data-src|data-original|data-url|data-lazy-src|data-img)\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(fullImgTag)?.groupValues?.get(1)?.trim()
+            val src = Regex("""(?<!data-)src\s*=\s*['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(fullImgTag)?.groupValues?.get(1)?.trim()
 
-            // Extract class
-            val classMatch = Regex("""class\s*=\s*['"]([^'"]*)['"]""", RegexOption.IGNORE_CASE).find(fullImgTag)
-            val cls = classMatch?.groupValues?.get(1)?.trim()
+            val rawCandidate = when {
+                !dataSrc.isNullOrBlank() && !dataSrc.startsWith("data:") -> dataSrc
+                !src.isNullOrBlank() && !src.startsWith("data:") && !src.endsWith(".gif") -> src
+                !dataSrc.isNullOrBlank() -> dataSrc
+                !src.isNullOrBlank() -> src
+                else -> null
+            } ?: continue
 
-            val resolved = resolveAbsoluteUrl(baseUrl, rawSrc)
+            val alt = Regex("""alt\s*=\s*['"]([^'"]*)['"]""", RegexOption.IGNORE_CASE).find(fullImgTag)?.groupValues?.get(1)?.trim()
+            val cls = Regex("""class\s*=\s*['"]([^'"]*)['"]""", RegexOption.IGNORE_CASE).find(fullImgTag)?.groupValues?.get(1)?.trim()
+
+            val resolved = resolveAbsoluteUrl(baseUrl, rawCandidate)
 
             // Strict Filter: Never accept advertisements, promotional banners, or non-diagrams
             if (!QuestionImageFilter.isAdOrPromotionalImage(resolved, alt, cls) &&
@@ -296,7 +428,7 @@ object WebQuestionExtractor {
             ) {
                 boundDiagramUrl = resolved
                 boundDiagramAlt = alt
-                break // Only take the primary question diagram
+                break // Only take the primary question diagram belonging to this block
             }
         }
 
@@ -388,6 +520,15 @@ object WebQuestionExtractor {
             """.trimIndent()
         } else ""
 
+        val verifiedImagesBlock = if (extraction.verifiedDiagramImages.isNotEmpty()) {
+            """
+            
+            AUTHENTIC EXTRACTED DIAGRAM IMAGE POOL FOR THIS CHAPTER:
+            ${extraction.verifiedDiagramImages.take(15).joinToString("\n") { "- $it" }}
+            (Use these authentic verified image URLs in "imageUrl" when crafting diagram, circuit, ray optics, or biology figure questions for this chapter!)
+            """.trimIndent()
+        } else ""
+
         return """
             You are an elite $examName faculty mentor and question curator specializing in authentic question extraction from $domainHeader.
             
@@ -402,25 +543,32 @@ object WebQuestionExtractor {
             $customCommandBlock
 
             $structuredContentBlock
+            $verifiedImagesBlock
             
             $negativePromptClause
             
-            CRITICAL MANDATE FOR TARGET QUESTION COUNT ($questionCount QUESTIONS) & ZERO DUPLICATION:
+            CRITICAL MANDATE FOR TARGET QUESTION COUNT ($questionCount QUESTIONS) & COMPREHENSIVE QUESTION MATRIX:
             1. EXACT TARGET COUNT: You MUST return a JSON array containing EXACTLY $questionCount complete question objects.
-            2. SOURCE QUESTIONS & AUTHENTIC IMAGE URL BINDING:
-               - For all extracted source questions listed above, preserve the authentic problem statements and retain their EXACT "imageUrl" without dropping or nullifying them.
-            3. UNIQUE EXPANSION FOR REMAINING QUESTIONS (NO DUPLICATES EVER):
+            2. MULTI-SOURCE QUESTION MATRIX (DO NOT RESTRICT TO ONLY PYQs):
+               Provide a rich, balanced blend:
+               * 40% Authentic Previous Year Questions (NEET/AIPMT 39-Year trends & JEE Main numericals)
+               * 30% NCERT Line-by-Line & NCERT Exemplar Drill (Critical textbook lines, tables, summary concepts, exemplar MCQs)
+               * 20% Coaching Test Series & Kota Ranker Benchmarks (NEETPrep Target Batch, Allen, PW, Aakash test series standard)
+               * 10% New NTA Pattern Variations (Assertion-Reason, Statement I & II, Match-the-column matrices)
+            3. SOURCE QUESTIONS & EXACT DIAGRAM URL RETENTION:
+               - For all extracted source questions listed above that have a verified image URL, preserve the authentic problem statements and copy that EXACT "imageUrl" without dropping or altering it.
+               - If a source question has NO diagram in the source, set "imageUrl": null, "hasImage": false, "diagramLabel": null.
+            4. UNIQUE EXPANSION FOR REMAINING QUESTIONS (NO DUPLICATES EVER):
                - For questions from #${(extraction.extractedQuestions.size + 1).coerceAtMost(questionCount)} to #$questionCount:
                  You MUST generate COMPLETELY UNIQUE, AUTHENTIC, HIGH-YIELD questions covering DIFFERENT subtopics, laws, formulas, reactions, and concepts in "$chapter" ($subject).
                - ABSOLUTELY ZERO DUPLICATION: NEVER repeat the same question, NEVER change only numbers, NEVER copy-paste Question #1 across multiple items!
-            4. DIAGRAMS & FIGURES FOR DIAGRAM-BASED QUESTIONS:
+            5. STRICT ZERO-FAKE DIAGRAM MANDATE:
                - ONLY attach an "imageUrl" if it is an exact verified educational question image URL from the source list above.
-               - STRICT BAN ON STOCK PHOTOS & HALLUCINATED URLS: NEVER invent, fake, or provide stock photo / Unsplash / Pixabay / blog image URLs!
-               - If a question was generated by AI and does not have a verified source image from the extracted list, "imageUrl" MUST BE null.
-               - Describe the setup clearly in "diagramLabel" (e.g. "Figure: Wheatstone bridge circuit with resistors P=2Ω, Q=4Ω, R=3Ω, S=6Ω").
-               - Set "diagramType" to "BIOLOGY_NCERT", "CIRCUIT", "RAY_OPTICS", "GENETICS", or "GRAPH".
-            5. For purely theoretical or non-figure questions: set "hasImage": false, "imageUrl": null, "diagramLabel": null.
-            6. Ensure options (A, B, C, D) are clear, unambiguous, mutually exclusive with exactly ONE correct option. Include step-by-step NCERT solution in "explanation".
+               - STRICT BAN ON HISTORICAL PORTRAITS, BOOK COVERS, STOCK PHOTOS & FAKE URLS: NEVER invent, fake, or provide arbitrary URLs!
+               - NEVER attach portraits of scientists or antique book covers to physics/chemistry/biology questions!
+               - If a question was generated by AI or does NOT have an authentic diagram from the source, "imageUrl" MUST BE null, "hasImage" MUST BE false, and "diagramLabel" MUST BE null.
+            6. For purely theoretical, numerical, or non-figure questions: set "hasImage": false, "imageUrl": null, "diagramLabel": null.
+            7. Ensure options (A, B, C, D) are clear, unambiguous, mutually exclusive with exactly ONE correct option. Include step-by-step NCERT solution in "explanation".
             
             Return ONLY a valid JSON array of $questionCount question objects without markdown wrapping:
             [

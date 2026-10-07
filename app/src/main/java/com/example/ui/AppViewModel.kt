@@ -3749,6 +3749,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     customApiKey = customApiKey,
                     websiteSource = websiteSource
                 )
+                if (result.isFailure) {
+                    _aiTestGenerationError.value = result.exceptionOrNull()?.message ?: "Failed to generate mock test"
+                }
                 result.getOrElse { emptyList() }
             } else emptyList()
 
@@ -3826,7 +3829,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             result.onSuccess { questions ->
                 if (questions.isNotEmpty()) {
                     val sanitized = QuestionImageFilter.sanitizeTestQuestions(questions)
-                    val finalQuestions = sanitized.mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                    val finalQuestions = sanitized.mapIndexed { idx, q ->
+                        NcertDiagramResolver.ensureAuthenticDiagram(q.copy(id = idx + 1))
+                    }
                     testTimerJob?.cancel()
                     _activeTestQuestions.value = finalQuestions
                     _currentQuestionIndex.value = 0
@@ -4915,7 +4920,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val sanitized = QuestionImageFilter.sanitizeTestQuestions(questions)
                     testTimerJob?.cancel()
                     _activeSavedTestId.value = null
-                    _activeTestQuestions.value = sanitized.mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                    _activeTestQuestions.value = sanitized.mapIndexed { idx, q ->
+                        NcertDiagramResolver.ensureAuthenticDiagram(q.copy(id = idx + 1))
+                    }
                     val siteSuffix = if (!websiteSource.isNullOrBlank()) " [via ${websiteSource.take(24)}]" else ""
                     _activeTestTitle.value = "Targeted Weak Topic: $topic ($subject)$siteSuffix"
                     _activeTestInstitute.value = if (!websiteSource.isNullOrBlank()) websiteSource else "AI Diagnostic Series"

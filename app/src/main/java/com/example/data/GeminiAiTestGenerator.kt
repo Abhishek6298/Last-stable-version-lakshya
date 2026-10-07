@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -33,7 +34,7 @@ object GeminiAiTestGenerator {
     private val client = OkHttpClient.Builder()
         .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(90, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .build()
@@ -111,6 +112,9 @@ object GeminiAiTestGenerator {
         baseSyllabus: String
     ): String {
         if (totalBatches <= 1) return baseSyllabus
+        if (baseSyllabus.contains("Chapter:", ignoreCase = true)) {
+            return "$baseSyllabus (Partition ${batchIndex + 1} of $totalBatches: Focus strictly on unique laws, formulas, problem mechanisms, and sub-topics distinct from other partitions)"
+        }
         if (exam == ExamCategory.NEET) {
             when {
                 subject.contains("Physic", ignoreCase = true) -> {
@@ -244,7 +248,10 @@ object GeminiAiTestGenerator {
             if (isGroq && groqKey.isBlank()) {
                 return@withContext Result.failure(Exception("Groq API key is missing. Please add your Groq key in Settings."))
             }
-            if (!isOr && !isGroq && keys.isEmpty()) {
+            if (isCf && (cfAccountId.isBlank() || cfToken.isBlank())) {
+                return@withContext Result.failure(Exception("Cloudflare Account ID or API Token is missing. Please add your credentials in Settings."))
+            }
+            if (!isOr && !isGroq && !isCf && keys.isEmpty()) {
                 return@withContext Result.failure(Exception("AI Key is missing. Please configure your Gemini API Key in Settings to generate a Full Length Mock Test."))
             }
 
@@ -257,6 +264,78 @@ object GeminiAiTestGenerator {
                 }
                 ExamCategory.JEE_MAIN -> "Physics (${questionCount / 3} Qs), Chemistry (${questionCount / 3} Qs), Mathematics (${questionCount - 2 * (questionCount / 3)} Qs)"
                 ExamCategory.JEE_ADVANCED -> "Physics (${questionCount / 3} Qs), Chemistry (${questionCount / 3} Qs), Mathematics (${questionCount - 2 * (questionCount / 3)} Qs) with high conceptual rigor"
+            }
+
+            if (questionCount >= 30) {
+                val questions = coroutineScope {
+                    when (exam) {
+                        ExamCategory.NEET -> {
+                            val phy = when (questionCount) {
+                                180 -> 45
+                                90 -> 23
+                                45 -> 11
+                                30 -> 8
+                                else -> (questionCount * 45 / 180).coerceAtLeast(6)
+                            }
+                            val chem = when (questionCount) {
+                                180 -> 45
+                                90 -> 22
+                                45 -> 11
+                                30 -> 7
+                                else -> (questionCount * 45 / 180).coerceAtLeast(6)
+                            }
+                            val bio = questionCount - phy - chem
+
+                            val phyDef = async {
+                                val raw = generateSubjectBatch(context, keys, exam, "Physics", phy, "Class 11 & 12 Physics (50% NEET PYQs + 50% JEE Main PYQs)")
+                                padQuestionsToCount(raw, phy, "Physics", "Full Syllabus", exam)
+                            }
+                            val chemDef = async {
+                                delay(600L)
+                                val raw = generateSubjectBatch(context, keys, exam, "Chemistry", chem, "Class 11 & 12 Chemistry (Physical, Organic & Inorganic)")
+                                padQuestionsToCount(raw, chem, "Chemistry", "Full Syllabus", exam)
+                            }
+                            val bioDef = async {
+                                delay(1200L)
+                                val raw = generateSubjectBatch(context, keys, exam, "Biology", bio, "Complete 11th & 12th NCERT Biology (Botany & Zoology)")
+                                padQuestionsToCount(raw, bio, "Biology", "Full Syllabus", exam)
+                            }
+                            val pList = phyDef.await()
+                            val cList = chemDef.await()
+                            val bList = bioDef.await()
+                            (pList + cList + bList).mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                        }
+                        else -> {
+                            val countPerSub = questionCount / 3
+                            val pCount = countPerSub
+                            val cCount = countPerSub
+                            val mCount = questionCount - 2 * countPerSub
+                            val phyDef = async {
+                                val raw = generateSubjectBatch(context, keys, exam, "Physics", pCount, "JEE Physics PYQs")
+                                padQuestionsToCount(raw, pCount, "Physics", "Full Syllabus", exam)
+                            }
+                            val chemDef = async {
+                                delay(600L)
+                                val raw = generateSubjectBatch(context, keys, exam, "Chemistry", cCount, "JEE Chemistry PYQs")
+                                padQuestionsToCount(raw, cCount, "Chemistry", "Full Syllabus", exam)
+                            }
+                            val mathDef = async {
+                                delay(1200L)
+                                val raw = generateSubjectBatch(context, keys, exam, "Mathematics", mCount, "JEE Mathematics PYQs")
+                                padQuestionsToCount(raw, mCount, "Mathematics", "Full Syllabus", exam)
+                            }
+                            val pList = phyDef.await()
+                            val cList = chemDef.await()
+                            val mList = mathDef.await()
+                            (pList + cList + mList).mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                        }
+                    }
+                }
+                if (questions.isNotEmpty()) {
+                    val sanitized = QuestionImageFilter.sanitizeTestQuestions(questions)
+                    val finalQs = sanitized.mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                    return@withContext Result.success(finalQs)
+                }
             }
 
             val randomSeed = "${System.currentTimeMillis()}_${Random.nextInt(999999)}"
@@ -352,10 +431,57 @@ object GeminiAiTestGenerator {
                 )
                 Result.success(finalQuestions)
             } else {
-                Result.failure(Exception("AI returned empty test questions. Please check your internet connection or verify your AI API key in Settings."))
+                val fallback = when (exam) {
+                    ExamCategory.NEET -> {
+                        val phy = (questionCount * 45 / 180).coerceAtLeast(6)
+                        val chem = (questionCount * 45 / 180).coerceAtLeast(6)
+                        val bio = questionCount - phy - chem
+                        val pList = padQuestionsToCount(emptyList(), phy, "Physics", "Full Syllabus", exam)
+                        val cList = padQuestionsToCount(emptyList(), chem, "Chemistry", "Full Syllabus", exam)
+                        val bList = padQuestionsToCount(emptyList(), bio, "Biology", "Full Syllabus", exam)
+                        (pList + cList + bList).mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                    }
+                    else -> {
+                        val countPerSub = questionCount / 3
+                        val pCount = countPerSub
+                        val cCount = countPerSub
+                        val mCount = questionCount - 2 * countPerSub
+                        val pList = padQuestionsToCount(emptyList(), pCount, "Physics", "Full Syllabus", exam)
+                        val cList = padQuestionsToCount(emptyList(), cCount, "Chemistry", "Full Syllabus", exam)
+                        val mList = padQuestionsToCount(emptyList(), mCount, "Mathematics", "Full Syllabus", exam)
+                        (pList + cList + mList).mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                    }
+                }
+                Result.success(fallback)
             }
         } catch (e: Exception) {
             e.printStackTrace()
+            try {
+                val fallback = when (exam) {
+                    ExamCategory.NEET -> {
+                        val phy = (questionCount * 45 / 180).coerceAtLeast(6)
+                        val chem = (questionCount * 45 / 180).coerceAtLeast(6)
+                        val bio = questionCount - phy - chem
+                        val pList = padQuestionsToCount(emptyList(), phy, "Physics", "Full Syllabus", exam)
+                        val cList = padQuestionsToCount(emptyList(), chem, "Chemistry", "Full Syllabus", exam)
+                        val bList = padQuestionsToCount(emptyList(), bio, "Biology", "Full Syllabus", exam)
+                        (pList + cList + bList).mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                    }
+                    else -> {
+                        val countPerSub = questionCount / 3
+                        val pCount = countPerSub
+                        val cCount = countPerSub
+                        val mCount = questionCount - 2 * countPerSub
+                        val pList = padQuestionsToCount(emptyList(), pCount, "Physics", "Full Syllabus", exam)
+                        val cList = padQuestionsToCount(emptyList(), cCount, "Chemistry", "Full Syllabus", exam)
+                        val mList = padQuestionsToCount(emptyList(), mCount, "Mathematics", "Full Syllabus", exam)
+                        (pList + cList + mList).mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                    }
+                }
+                if (fallback.isNotEmpty()) {
+                    return@withContext Result.success(fallback)
+                }
+            } catch (_: Exception) {}
             Result.failure(Exception("Full Mock Test generation failed: ${e.localizedMessage ?: "Unknown error"}. Please check your model or API settings."))
         }
     }
@@ -372,9 +498,14 @@ object GeminiAiTestGenerator {
         targetCount: Int,
         syllabusFocus: String
     ): List<AiTestQuestion> {
-        if (keys.isEmpty() || targetCount <= 0) return emptyList()
+        val prefs = context.getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+        val providerPref = prefs.getString("ai_provider", AiProvider.NATIVE_GEMINI.name) ?: AiProvider.NATIVE_GEMINI.name
+        val isThirdParty = providerPref != AiProvider.NATIVE_GEMINI.name
+        val hasKey = isThirdParty || keys.isNotEmpty() || getApiKey(context).isNotBlank()
+        if (!hasKey || targetCount <= 0) return emptyList()
+
         val allQuestions = mutableListOf<AiTestQuestion>()
-        val chunkSize = if (targetCount > 30) 30 else targetCount
+        val chunkSize = if (targetCount > 25) 25 else targetCount
         val batches = (targetCount + chunkSize - 1) / chunkSize
 
         for (b in 0 until batches) {
@@ -405,11 +536,15 @@ object GeminiAiTestGenerator {
                 1. 100% UNIQUE QUESTIONS: Every question MUST be completely distinct and test a different concept or formula.
                 2. Under NO circumstances should any two questions in this test be duplicates, near-duplicates, or test the same concept twice.$antiDuplicateBlacklist
                 
-                CORE INSTRUCTIONS:
-                1. Every question must be an authentic 39Y PYQ from 1988 to 2026.
-                2. FOR NEET PHYSICS & CHEMISTRY: Mix 50% NEET/AIPMT with 50% JEE Main/AIEEE & HC Verma/DC Pandey concept benchmarks. Tag `pyqYear` clearly (e.g. "⚡ JEE Main 2023 (AIEEE 39Y)", "🩺 NEET 2022 (AIPMT 39Y)", "🏆 JEE Main / HCV Benchmark"). Strictly NO Mathematics!
-                3. FOR NEET BIOLOGY: 100% authentic NCERT line-by-line 39-Year NEET/AIPMT questions. Tag `pyqYear` with "🩺 NEET 2023 (AIPMT 39Y)".
-                4. Include diagrams/figures where appropriate ("hasImage": true, "diagramLabel", "diagramSvg", "diagramType").
+                CORE INSTRUCTIONS (MULTI-DIMENSIONAL QUESTION MATRIX - NOT JUST PYQs):
+                1. Include a balanced mix:
+                   - 40% Authentic Previous Year Questions (NEET/AIPMT 39Y PYQs & JEE Main speed numericals)
+                   - 30% NCERT Line-by-Line & NCERT Exemplar Drill questions
+                   - 20% Coaching Test Series & Kota Ranker Benchmarks (NEETPrep, Allen, PW test series standard)
+                   - 10% New NTA Pattern Variations (Assertion-Reason, Statements I & II, Match-the-column)
+                2. FOR NEET PHYSICS & CHEMISTRY: Mix 50% NEET/AIPMT with 50% JEE Main/AIEEE & HC Verma/DC Pandey concept benchmarks. Tag `pyqYear` realistically (e.g. "🩺 NEET 2024 PYQ", "📖 NCERT Line-by-Line Drill", "🔬 NCERT Exemplar", "🎯 Coaching Test Series Benchmark", "⚡ JEE Main 2023 PYQ"). Strictly NO Mathematics!
+                3. FOR NEET BIOLOGY: 100% authentic NCERT line-by-line & coaching drill questions (Botany + Zoology).
+                4. Include diagrams/figures where appropriate ("hasImage": true, "diagramLabel", "diagramType").
                 5. Provide 4 distinct options (optionA, optionB, optionC, optionD) and correctOption ("A", "B", "C", or "D").
                 6. Output ONLY a valid JSON array of $countNeeded objects.
             """.trimIndent()
@@ -426,6 +561,125 @@ object GeminiAiTestGenerator {
                 e.printStackTrace()
             }
         }
+        return deduplicateQuestions(allQuestions)
+    }
+
+    /**
+     * Chunks high-count chapter/topic question generation (e.g. 45Q, 90Q, custom > 25Q)
+     * into safe, fast 20-25 question batches to prevent token limits, timeouts, and JSON truncations.
+     */
+    private suspend fun generateChapterBatches(
+        context: Context,
+        keys: List<String>,
+        exam: ExamCategory,
+        subject: String,
+        chapter: String,
+        topic: String,
+        targetCount: Int,
+        difficulty: String,
+        websiteSource: String?,
+        customCommand: String?,
+        mixInstruction: String,
+        negativePrompt: String,
+        verifiedWebImages: Set<String>?
+    ): List<AiTestQuestion> {
+        val allQuestions = mutableListOf<AiTestQuestion>()
+        val chunkSize = 25
+        val batches = (targetCount + chunkSize - 1) / chunkSize
+
+        val subtopics = ExamSyllabusDatabase.getSubtopicsForChapter(chapter)
+
+        val batchResults = coroutineScope {
+            (0 until batches).map { b ->
+                val countNeeded = if (b == batches - 1) {
+                    targetCount - (b * chunkSize)
+                } else chunkSize
+
+                async {
+                    if (b > 0) delay(b * 1000L) // Stagger calls slightly to avoid burst collisions
+                    val batchSubtopicFocus = if (subtopics.isNotEmpty()) {
+                        val fromIdx = (b * subtopics.size / batches).coerceIn(0, subtopics.size - 1)
+                        val toIdx = ((b + 1) * subtopics.size / batches).coerceIn(fromIdx + 1, subtopics.size)
+                        val slice = subtopics.subList(fromIdx, toIdx)
+                        "Focus Sub-Topics: " + slice.joinToString(", ")
+                    } else {
+                        "Partition ${b + 1} of $batches: High-Yield Concepts & Formulas in $chapter"
+                    }
+
+                    val customClause = if (!customCommand.isNullOrBlank()) "USER DIRECTIVE: $customCommand" else ""
+                    val siteClause = if (!websiteSource.isNullOrBlank()) "Target standard and curriculum of: $websiteSource" else ""
+                    val randomSeed = "${System.currentTimeMillis()}_${b}_${Random.nextInt(999999)}"
+
+                    val batchPrompt = """
+                        You are an elite NTA/IIT-JEE Faculty Mentor specializing in 39-Year PYQ mastery (1988-2026).
+                        Session Seed: $randomSeed
+                        Exam: ${exam.displayName}
+                        Subject: $subject
+                        Target Chapter: "$chapter"
+                        $batchSubtopicFocus
+                        $siteClause
+                        Difficulty Level: $difficulty
+                        Question Count: EXACTLY $countNeeded QUESTIONS (Batch ${b + 1} of $batches for $targetCount total questions)
+                        Mix Guidance: $mixInstruction
+                        $customClause
+                        $negativePrompt
+                        
+                        CRITICAL ZERO-DUPLICATION MANDATE:
+                        1. 100% UNIQUE QUESTIONS: Every question MUST test a DIFFERENT sub-topic, law, formula, reaction, or concept within "$chapter".
+                        2. Return EXACTLY $countNeeded complete authentic multiple-choice questions.
+                        3. Options must be distinct (optionA, optionB, optionC, optionD) with correctOption ("A", "B", "C", or "D").
+                        4. For diagram/graph questions: Set "hasImage": true, and describe figure in "diagramLabel".
+                        5. Return ONLY a valid JSON array of $countNeeded objects starting with '[' and ending with ']'. No markdown code fences.
+                        
+                        JSON Format:
+                        [
+                          {
+                            "id": 1,
+                            "subject": "$subject",
+                            "chapter": "$chapter",
+                            "subtopic": "Specific Subtopic",
+                            "ncertReference": "NCERT Reference",
+                            "conceptKey": "Core formula in 1 line",
+                            "pyqYear": "NEET 2024 PYQ",
+                            "questionText": "Question statement...",
+                            "hasImage": false,
+                            "imageUrl": null,
+                            "diagramLabel": null,
+                            "optionA": "...",
+                            "optionB": "...",
+                            "optionC": "...",
+                            "optionD": "...",
+                            "correctOption": "A",
+                            "explanation": "Step by step solution..."
+                          }
+                        ]
+                    """.trimIndent()
+
+                    try {
+                        val raw = callGeminiApi(context, keys, batchPrompt)
+                        deduplicateQuestions(parseQuestionsFromJson(raw))
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        try {
+                            delay(1800L)
+                            val rawRetry = callGeminiApi(context, keys, batchPrompt)
+                            deduplicateQuestions(parseQuestionsFromJson(rawRetry))
+                        } catch (_: Exception) {
+                            emptyList()
+                        }
+                    }
+                }
+            }.awaitAll()
+        }
+
+        for (bList in batchResults) {
+            for (q in bList) {
+                if (allQuestions.none { isSimilarQuestion(it.questionText, q.questionText) }) {
+                    allQuestions.add(q)
+                }
+            }
+        }
+
         return deduplicateQuestions(allQuestions)
     }
 
@@ -472,11 +726,11 @@ object GeminiAiTestGenerator {
             }
 
             val mixInstruction = if (exam == ExamCategory.NEET && (subject.contains("Physic", ignoreCase = true) || subject.contains("Chemi", ignoreCase = true))) {
-                "Mix authentic 39-Year Previous Year Questions from NEET/AIPMT, JEE Main (AIEEE), and JEE Advanced (IIT-JEE) for this chapter. Note: Strictly Physics/Chemistry questions only (NO Mathematics)."
+                "COMPREHENSIVE QUESTION MATRIX (NOT JUST PYQs): Include 40% Authentic 39Y PYQs (NEET & JEE Main speed numericals) + 30% NCERT Line-by-Line & NCERT Exemplar Drills + 20% Coaching Test Series / Kota Benchmarks (NEETPrep Target Batch, Allen, PW standard) + 10% New NTA Pattern Variations (Assertion-Reason, Statements I & II). Strictly Physics/Chemistry only (NO Mathematics)."
             } else if (exam == ExamCategory.NEET) {
-                "Authentic 39-Year NCERT NEET/AIPMT Biology PYQs (strictly no Mathematics)."
+                "COMPREHENSIVE BIOLOGY MATRIX (NOT JUST PYQs): Include 40% Authentic 39Y NEET/AIPMT PYQs + 35% NCERT Line-by-Line Textbook statements & Exemplar Drills + 15% Kota Coaching Test Series Benchmarks + 10% New NTA Pattern (Assertion-Reason, Statement I & II, Diagram Labeling). Strictly no Mathematics."
             } else {
-                "Authentic 39-Year $subject PYQs from JEE Main and JEE Advanced."
+                "COMPREHENSIVE JEE MATRIX: 40% Authentic JEE Main & Advanced PYQs + 35% NCERT Exemplar & Advanced Numerical Drills + 25% Kota Benchmark Test Series problems."
             }
 
             val effectiveTopic = topic ?: "All Topics"
@@ -500,18 +754,43 @@ object GeminiAiTestGenerator {
                 """.trimIndent()
             } else ""
 
-            if (questionCount > 30 && websiteSource.isNullOrBlank() && customCommand.isNullOrBlank()) {
-                val batchList = generateSubjectBatch(context, 
+            var verifiedWebImages: Set<String>? = null
+            if (!websiteSource.isNullOrBlank() && WebQuestionExtractor.isWebTarget(websiteSource)) {
+                try {
+                    val extraction = WebQuestionExtractor.fetchAndExtract(websiteSource, chapter = chapter, subject = subject)
+                    verifiedWebImages = extraction.verifiedDiagramImages
+                } catch (_: Exception) {}
+            }
+
+            if (questionCount > 25) {
+                val batchList = generateChapterBatches(
+                    context = context,
                     keys = keys,
                     exam = exam,
                     subject = subject,
+                    chapter = chapter,
+                    topic = effectiveTopic,
                     targetCount = questionCount,
-                    syllabusFocus = "Chapter: $chapter ${if (!topic.isNullOrBlank() && topic != "All Topics") "Topic: $topic" else ""}. $mixInstruction"
+                    difficulty = difficulty,
+                    websiteSource = websiteSource,
+                    customCommand = customCommand,
+                    mixInstruction = mixInstruction,
+                    negativePrompt = negativePrompt,
+                    verifiedWebImages = verifiedWebImages
                 )
-                if (batchList.isNotEmpty()) {
-                    val padded = padQuestionsToCount(batchList, questionCount, subject, chapter, exam)
-                    return@withContext Result.success(padded)
+                val padded = padQuestionsToCount(batchList, questionCount, subject, chapter, exam)
+                val sanitized = QuestionImageFilter.sanitizeTestQuestions(padded, verifiedWebImages)
+                if (avoidRepeats) {
+                    QuestionDeduplicationManager.recordQuestions(
+                        context = context,
+                        topic = effectiveTopic,
+                        chapter = chapter,
+                        source = websiteSource,
+                        questions = sanitized
+                    )
                 }
+                val finalQuestions = sanitized.mapIndexed { idx, q -> q.copy(id = idx + 1) }
+                return@withContext Result.success(finalQuestions)
             }
 
             val topicClause = if (!topic.isNullOrBlank() && topic != "All Topics" && topic != "All") {
@@ -520,9 +799,8 @@ object GeminiAiTestGenerator {
                 "Target Chapter: \"$chapter\" (Cover all high-yield sub-topics across 39 years)"
             }
 
-            var verifiedWebImages: Set<String>? = null
             val promptText = if (!websiteSource.isNullOrBlank() && WebQuestionExtractor.isWebTarget(websiteSource)) {
-                val extraction = WebQuestionExtractor.fetchAndExtract(websiteSource)
+                val extraction = WebQuestionExtractor.fetchAndExtract(websiteSource, chapter = chapter, subject = subject)
                 verifiedWebImages = extraction.verifiedDiagramImages
                 WebQuestionExtractor.buildWebExtractionPrompt(
                     extraction = extraction,
@@ -561,11 +839,10 @@ object GeminiAiTestGenerator {
                 5. FOR NEET PHYSICS & CHEMISTRY: Mix authentic questions from NEET/AIPMT, JEE Main, and JEE Advanced (IIT-JEE) for top-rank mastery.
                 6. STRICT RULE: NEVER include any Mathematics in NEET questions.
                 7. Include standard PYQ variations, tricky conceptual traps, graph-based / assertion-reason / numerical-formula problems from 2026, 2025, 2024, and earlier.
-                8. If this chapter/topic contains diagrams or when diagram questions are requested (e.g. NCERT Biology diagrams, ray optics, circuits, graphs, structures):
-                   - Include authentic diagram identification / label-based questions.
-                   - Set `"hasImage": true`
-                   - In `"diagramLabel"`, explain the diagram (e.g. "Figure: Circuit with 4 resistors in bridge configuration" or "Figure: Reflex Arc Pathway").
-                   - Set `"diagramType"` to "BIOLOGY_NCERT", "ANATOMY", "CIRCUIT", "RAY_OPTICS", "GENETICS", or "GRAPH".
+                8. DIAGRAM POLICY (STRICT ZERO-FAKE POLICY):
+                   - NEVER invent, hallucinate, or provide fake image URLs. NEVER attach portraits of scientists or antique book covers.
+                   - If a question does NOT have a verified authentic diagram image, set `"hasImage": false`, `"imageUrl": null`, `"diagramLabel": null`, `"diagramSvg": null`.
+                   - Craft questions to be completely self-contained and clear without referencing phantom diagrams.
                 9. Specify exact PYQ year reference in `pyqYear` (e.g. "NEET 2026 PYQ", "JEE Main 2025 PYQ", "IIT-JEE 2022 Advanced", "AIPMT 2015").
                 10. Options must be clear and distinct (A, B, C, D) with `correctOption` being "A", "B", "C", or "D".
                 11. Provide clear, concise solution and key formula in `explanation`.
@@ -650,11 +927,17 @@ object GeminiAiTestGenerator {
                 val finalQuestions = padQuestionsToCount(parsedList, questionCount, subject, chapter, exam)
                 Result.success(finalQuestions)
             } else {
-                Result.failure(Exception("AI could not generate questions for topic '$topic'. Please check your internet connection or verify your AI API key in Profile."))
+                val fallback = padQuestionsToCount(emptyList(), questionCount, subject, chapter, exam)
+                Result.success(fallback)
             }
         } catch (e: Exception) {
             e.printStackTrace()
-            Result.failure(Exception("AI generation failed for '$topic': ${e.localizedMessage ?: "Network or API key error"}. Please check your model or API settings."))
+            val fallback = padQuestionsToCount(emptyList(), questionCount, subject, chapter, exam)
+            if (fallback.isNotEmpty()) {
+                Result.success(fallback)
+            } else {
+                Result.failure(Exception("AI generation failed for '$topic': ${e.localizedMessage ?: "Network or API key error"}. Please check your model or API settings."))
+            }
         }
     }
 
@@ -715,7 +998,7 @@ object GeminiAiTestGenerator {
                 throw Exception("OpenRouter API Key is missing. Please configure your OpenRouter key in Settings.")
             }
             // Execute OpenRouter call directly with selected model. DO NOT fallback to Gemini 3.7!
-            return OpenRouterManager.callOpenRouterChat(orKey, orModel, prompt, context = context, maxTokens = 8192, systemPrompt = jsonSystemPrompt)
+            return OpenRouterManager.callOpenRouterChat(orKey, orModel, prompt, context = context, maxTokens = 16384, systemPrompt = jsonSystemPrompt)
         } else if (providerPref == AiProvider.GROQ.name) {
             val groqKey = GroqManager.getGroqApiKey(context)
             val groqModel = GroqManager.getSelectedModel(context)
@@ -744,7 +1027,7 @@ object GeminiAiTestGenerator {
                 apiToken = cfToken,
                 model = cfModel,
                 prompt = prompt,
-                maxTokens = 8192,
+                maxTokens = 4096,
                 systemPrompt = jsonSystemPrompt,
                 temperature = 0.3
             )
@@ -771,7 +1054,7 @@ object GeminiAiTestGenerator {
             put("contents", contentsArr)
             val genConfig = JSONObject().apply {
                 put("temperature", 0.75)
-                put("maxOutputTokens", 8192)
+                put("maxOutputTokens", 16384)
                 put("responseMimeType", "application/json")
             }
             put("generationConfig", genConfig)
@@ -782,8 +1065,16 @@ object GeminiAiTestGenerator {
             .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
-        val response = client.newCall(request).await()
+        var response = client.newCall(request).await()
         var responseString = response.body?.string() ?: ""
+
+        // Handle 429 Rate Limit with backoff retry
+        if (!response.isSuccessful && response.code == 429) {
+            delay(3500L)
+            response = client.newCall(request).await()
+            responseString = response.body?.string() ?: ""
+        }
+
         if (!response.isSuccessful && (response.code == 400 || response.code == 404)) {
             // Some models reject responseMimeType="application/json" or model name needs fallback
             val fallbackModel = if (response.code == 404) "gemini-2.5-flash" else model
@@ -801,7 +1092,7 @@ object GeminiAiTestGenerator {
                 put("contents", contentsArr)
                 val genConfig = JSONObject().apply {
                     put("temperature", 0.7)
-                    put("maxOutputTokens", 8192)
+                    put("maxOutputTokens", 16384)
                 }
                 put("generationConfig", genConfig)
             }
@@ -811,9 +1102,17 @@ object GeminiAiTestGenerator {
                 .build()
             val retryResponse = client.newCall(retryRequest).await()
             if (retryResponse.isSuccessful) {
+                response = retryResponse
                 responseString = retryResponse.body?.string() ?: ""
             }
         }
+
+        if (!response.isSuccessful) {
+            val root = try { JSONObject(responseString) } catch (_: Exception) { null }
+            val errorMsg = root?.optJSONObject("error")?.optString("message") ?: "HTTP ${response.code}"
+            throw Exception("Gemini Error (${response.code}): $errorMsg")
+        }
+
         if (responseString.isNotBlank()) {
             val root = try { JSONObject(responseString) } catch (_: Exception) { null }
             val candidates = root?.optJSONArray("candidates")
@@ -834,12 +1133,7 @@ object GeminiAiTestGenerator {
             }
             throw Exception("Empty content in Gemini response")
         } else {
-            val errorMsg = try {
-                JSONObject(responseString).optJSONObject("error")?.optString("message") ?: "HTTP ${response.code}"
-            } catch (e: Exception) {
-                "HTTP ${response.code}"
-            }
-            throw Exception("Gemini Error: $errorMsg")
+            throw Exception("Empty response received from AI server (HTTP ${response.code})")
         }
     }
 
@@ -1121,10 +1415,12 @@ object GeminiAiTestGenerator {
 
         val isAdOrInvalid = QuestionImageFilter.isAdOrPromotionalImage(rawImg)
         val imgUrl = if (rawImg.isNotBlank() && !rawImg.equals("null", true) && !rawImg.equals("none", true) && !isAdOrInvalid) rawImg else null
-        val diagLabel = if (rawLabel.isNotBlank() && !rawLabel.equals("null", true) && !rawLabel.equals("none", true)) rawLabel else null
         val diagSvg = if (rawSvg.isNotBlank() && !rawSvg.equals("null", true) && !rawSvg.equals("none", true)) rawSvg else null
+        val diagLabel = if (imgUrl != null || diagSvg != null) {
+            if (rawLabel.isNotBlank() && !rawLabel.equals("null", true) && !rawLabel.equals("none", true)) rawLabel else null
+        } else null
         val diagType = if (rawType.isNotBlank() && !rawType.equals("null", true) && !rawType.equals("none", true)) rawType else if (imgUrl != null || diagSvg != null) "BIOLOGY_NCERT" else null
-        val hasImage = imgUrl != null || diagSvg != null || (diagLabel != null && obj.optBoolean("hasImage", false)) || obj.optBoolean("hasImage", false)
+        val hasImage = imgUrl != null || diagSvg != null
 
         val rawDiff = obj.optString("difficulty", "Medium").trim()
         val diff = when {
@@ -1160,7 +1456,8 @@ object GeminiAiTestGenerator {
             conceptKey = rawConcept,
             subtopic = rawSubtopic
         )
-        return NcertConceptRegistry.enrichQuestionWithNcertDetails(rawQuestion)
+        val enriched = NcertConceptRegistry.enrichQuestionWithNcertDetails(rawQuestion)
+        return NcertDiagramResolver.ensureAuthenticDiagram(enriched)
     }
 
     private fun rescueQuestionsWithRegex(text: String): List<AiTestQuestion> {
@@ -1189,16 +1486,16 @@ object GeminiAiTestGenerator {
         exam: ExamCategory = ExamCategory.NEET
     ): List<AiTestQuestion> {
         val result = deduplicateQuestions(list).toMutableList()
-        if (result.isEmpty()) return emptyList()
 
         if (result.size >= targetCount) {
             return result.take(targetCount).mapIndexed { idx, q ->
-                NcertConceptRegistry.enrichQuestionWithNcertDetails(q.copy(id = idx + 1))
+                val enriched = NcertConceptRegistry.enrichQuestionWithNcertDetails(q.copy(id = idx + 1))
+                NcertDiagramResolver.ensureAuthenticDiagram(enriched)
             }
         }
 
-        // Fill remaining count with 100% UNIQUE high-yield questions for this chapter & subject.
-        // NEVER clone existing questions into duplicate identical copies!
+        // Fill remaining count (even if result was empty!) with 100% UNIQUE high-yield questions for this chapter & subject.
+        // Guarantees test generation always delivers the exact question count requested.
         val missingCount = targetCount - result.size
         val subtopics = ExamSyllabusDatabase.getSubtopicsForChapter(chapter)
         val generated = generateUniqueQuestionsForChapter(
@@ -1212,7 +1509,8 @@ object GeminiAiTestGenerator {
         result.addAll(generated)
 
         return result.take(targetCount).mapIndexed { idx, q ->
-            NcertConceptRegistry.enrichQuestionWithNcertDetails(q.copy(id = idx + 1))
+            val enriched = NcertConceptRegistry.enrichQuestionWithNcertDetails(q.copy(id = idx + 1))
+            NcertDiagramResolver.ensureAuthenticDiagram(enriched)
         }
     }
 

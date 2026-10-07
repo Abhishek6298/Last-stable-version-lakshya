@@ -118,7 +118,7 @@ object QuestionImageFilter {
         "analytics",
         "dashboard",
         "blog",
-        "article",
+        "/article",
         "testimonial",
         "review"
     )
@@ -164,7 +164,6 @@ object QuestionImageFilter {
         "cycle",
         "reaction",
         "pathway",
-        "flux through",
         "block of mass",
         "resistor",
         "capacitor",
@@ -282,12 +281,14 @@ object QuestionImageFilter {
                 lower.contains("/circuit") || lower.contains("/figure") || lower.contains("/q_img") ||
                 lower.contains("/q-img") || lower.contains("/q_images") || lower.contains("/latex") ||
                 lower.contains("/math") || lower.contains("/problem") || lower.contains("/mcq") ||
-                lower.contains("/uploads/question") || lower.contains("/solution") ||
-                lower.contains("doubtnut.com/q-images") || lower.contains("examgoal") ||
-                lower.contains("pw.live") || lower.contains("shaalaa.com") || lower.contains("toppr.com") ||
-                lower.contains("neetprep.com/question") || lower.contains("allen.in") ||
-                lower.contains("cloudfront.net/images/questions") || lower.contains("d10lpgp6xz60nq.cloudfront.net") ||
-                lower.contains("res.cloudinary.com")
+                lower.contains("/uploads/") || lower.contains("/solution") || lower.contains("/content/") ||
+                lower.contains("neetprep") || lower.contains("doubtnut") ||
+                lower.contains("examgoal") || lower.contains("pw.live") ||
+                lower.contains("shaalaa") || lower.contains("toppr") ||
+                lower.contains("allen.in") || lower.contains("testbook") ||
+                lower.contains("cloudfront.net") || lower.contains("cloudinary.com") ||
+                lower.contains("amazonaws.com") || lower.contains("wikimedia.org") ||
+                lower.contains("wikipedia.org")
 
         return hasQuestionIndicator
     }
@@ -327,7 +328,12 @@ object QuestionImageFilter {
                 finalUrl = null
             }
 
-            // 2. Web-Source Grounding: verify against scraped images if available
+            // 2. Purge unreferenced diagrams from purely textual questions
+            if (finalUrl != null && !questionReferencesDiagram(q.questionText) && q.diagramLabel.isNullOrBlank()) {
+                finalUrl = null
+            }
+
+            // 3. Web-Source Grounding: verify against scraped images if available
             if (finalUrl != null && verifiedWebImages != null && verifiedWebImages.isNotEmpty()) {
                 val isLocal = finalUrl.startsWith("/") || finalUrl.startsWith("file://")
                 if (!isLocal) {
@@ -343,11 +349,12 @@ object QuestionImageFilter {
                 }
             }
 
-            val hasImage = finalUrl != null || !q.diagramSvg.isNullOrBlank() || (!q.diagramLabel.isNullOrBlank() && q.hasImage) || q.hasImage
+            val hasImage = finalUrl != null || (!q.diagramSvg.isNullOrBlank() && q.diagramSvg.contains("<svg", ignoreCase = true))
 
             q.copy(
                 hasImage = hasImage,
-                imageUrl = finalUrl
+                imageUrl = finalUrl,
+                diagramLabel = if (hasImage) q.diagramLabel else null
             )
         }
     }
